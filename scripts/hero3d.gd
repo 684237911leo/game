@@ -11,7 +11,7 @@ signal revived
 
 enum State { IDLE, WALK, ATTACK, DEAD }
 
-const HERO_GLB := "res://models/hero_anim.glb"
+const HERO_GLB := "res://models/hero_dressed.glb"
 const RAPIER_GLB := "res://models/rapier.glb"
 const SOCKET_BONE_PREFIX := "WeaponSocket"
 
@@ -26,10 +26,12 @@ const BLEND_TIME := 0.15
 const TURN_RATE := 12.0
 const REVIVE_DELAY := 2.5
 
-## Шпага относительно кости WeaponSocket.R: смещение (м) и поворот (градусы).
-## Клинок в glTF вдоль -Z; поворот подбирался по скриншотам (см. отчёт).
-const RAPIER_OFFSET := Vector3(0.0, -0.05, 0.0)
-const RAPIER_ROT_DEG := Vector3(90.0, 0.0, 0.0)
+## Шпага относительно кости WeaponSocket.R: смещение (м) и поворот (градусы, порядок YXZ).
+## Клинок в rapier.glb вдоль -Z, рукоять около начала. Ось Y кости WeaponSocket.R = направление кисти
+## (вперёд и чуть вверх в idle). Клинок идёт вдоль +Y кости, гарда поперёк кулака (ось X шпаги = +Z кости),
+## высота гарды (ось Y шпаги) = -X кости. Смещение -0.04 по Y кости: рукоять в ладони, у запястья.
+const RAPIER_OFFSET := Vector3(0.0, -0.04, 0.0)
+const RAPIER_ROT_DEG := Vector3(90.0, -90.0, 0.0)
 
 ## Лицо модели смотрит в +Z (glTF): yaw = atan2(dir.x, dir.z) + MODEL_YAW_OFFSET.
 const MODEL_YAW_OFFSET := 0.0

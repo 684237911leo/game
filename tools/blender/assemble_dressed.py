@@ -25,7 +25,7 @@ CLOTHES_BLENDS = [
     os.path.join(ROOT, "source_art/clothes_legs.blend"),
     os.path.join(ROOT, "source_art/clothes_head.blend"),
 ]
-OUT_GLB = os.path.join(ROOT, "models/hero_dressed.glb")
+OUT_GLB = os.path.join(ROOT, "models/hero_dressed_v2.glb")
 DOCS = os.path.join(ROOT, "docs/models")
 WORK = "/tmp/claude-0/-home-user-game/354ab7fc-40d7-5937-8c42-4d3716dfda7e/scratchpad/work"
 RENDER_DIR = os.path.join(WORK, "renders")
@@ -425,6 +425,24 @@ def preview(glb_path):
         set_camera(pivot, cam, ang, CAM_DIST_STILL)
         render_to(os.path.join(DOCS, fname), STILL_SIZE)
         log("still", fname)
+
+    # крупные планы (камера Pivot не нужна: ставим вручную)
+    for fname, loc, tgt, lens in [
+        ("dressed_close_shoulder.png", (1.0, -0.9, 1.5), (0.33, 0.0, 1.35), 50),
+        ("dressed_close_hands.png", (1.15, -0.95, 1.25), (0.60, -0.08, 0.98), 70),
+        ("dressed_close_shoulder_R.png", (-1.0, -0.9, 1.5), (-0.33, 0.0, 1.35), 50),
+        ("dressed_close_shoulder_back.png", (-0.9, 1.0, 1.5), (-0.33, 0.0, 1.35), 50),
+        ("dressed_close_hands_R.png", (-1.15, -0.95, 1.25), (-0.58, -0.10, 0.96), 70),
+    ]:
+        cam.parent = None
+        cam.location = loc
+        cam.rotation_euler = (__import__("mathutils").Vector(tgt) - __import__("mathutils").Vector(loc)).to_track_quat("-Z", "Y").to_euler()
+        cam.data.lens = lens
+        render_to(os.path.join(DOCS, fname), (800, 800))
+        log("close", fname)
+    cam.parent = pivot
+    cam.data.lens = 50.0
+    cam.rotation_euler = (math.radians(90), 0.0, 0.0)
 
     # полосы: 6 кадров, вид 3/4
     for anim in ANIMS:

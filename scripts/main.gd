@@ -17,6 +17,11 @@ const SHOT_WALK_CELLS := 5
 const SHOT_ATTACK_DELAY := 0.3
 const SHOT_DEATH_DELAY := 1.4
 const SHOT_CLOSE_ZOOM := 3.0
+## Крупный план руки: видимая высота 1.6 м, фокус на груди героини.
+const SHOT_HAND_ZOOM := 1.6
+## Моменты удара для крупного плана (секунды от начала удара).
+const SHOT_HAND_ATTACK_A := 0.2
+const SHOT_HAND_ATTACK_B := 0.5
 const SHOT_SETTLE := 1.2
 const SHOT_WAIT_TIMEOUT := 15.0
 const SINGLE_SHOT_DELAY := 1.0
@@ -192,6 +197,17 @@ func _run_shots(dir: String) -> void:
 	camera.set_zoom(SHOT_CLOSE_ZOOM)
 	await _wait_seconds(SHOT_SETTLE)
 	await _capture(dir.path_join("3d_close.png"))
+
+	# Крупный план руки со шпагой: покой и два момента удара.
+	camera.set_zoom(SHOT_HAND_ZOOM)
+	await _wait_seconds(SHOT_SETTLE)
+	await _capture(dir.path_join("3d_hand_idle.png"))
+	hero.attack()
+	await _wait_seconds(SHOT_HAND_ATTACK_A)
+	await _capture(dir.path_join("3d_hand_attack_a.png"))
+	await _wait_seconds(SHOT_HAND_ATTACK_B - SHOT_HAND_ATTACK_A)
+	await _capture(dir.path_join("3d_hand_attack_b.png"))
+	await _wait_until(func(): return hero.state_name() != "attack")
 	print("SHOTS DONE dir=%s" % dir)
 	get_tree().quit(0)
 

@@ -32,6 +32,7 @@ import bpy
 import bmesh
 from mathutils import Matrix, Vector
 from mathutils.bvhtree import BVHTree
+from mathutils import kdtree
 
 ROOT = "/home/user/game"
 BODY_GLB = os.path.join(ROOT, "models", "adapted_body.glb")
@@ -791,6 +792,91 @@ def refit(ob, target, min_clear):
     return n
 
 
+def shoulder_snap(ob, off=0.026, reach=0.06, smooth_iters=2):
+    """Плечевая зона Coat (|x|>0.12, z 1.12-1.43): вершины ближе reach к телу/руке прижимаются
+    на постоянный отступ off по нормали тела (устраняет рваные грани и отверстия на стыке
+    рукав-торс), затем лёгкое лапласово сглаживание с возвратом отступа."""
+    bm = bmesh.new()
+    bm.from_mesh(ob.data)
+    bm.verts.ensure_lookup_table()
+
+    def in_zone(co):
+        return 1.12 < co.z < 1.43 and abs(co.x) > 0.12
+
+    zone = [v for v in bm.verts if in_zone(v.co)]
+    snapped = set()
+    def snap(v):
+        r = _nearest_signed(v.co)
+        if r and r[0] < reach:
+            v.co = r[1] + r[2] * off
+            return True
+        return False
+    for v in zone:
+        if snap(v):
+            snapped.add(v.index)
+    for _ in range(smooth_iters):
+        new = {}
+        for i in snapped:
+            v = bm.verts[i]
+            nb = [e.other_vert(v).co for e in v.link_edges]
+            avg = sum(nb, Vector()) / len(nb)
+            new[i] = v.co.lerp(avg, 0.5)
+        for i, c in new.items():
+            bm.verts[i].co = c
+        for i in snapped:
+            v = bm.verts[i]
+            r = _nearest_signed(v.co)
+            if r and r[0] < off:
+                v.co = r[1] + r[2] * off
+    bm.to_mesh(ob.data)
+    bm.free()
+    ob.data.update()
+    return len(snapped)
+
+
+def cover_fix(ob, target=0.024, iters=20):
+    """Тело не должно торчать сквозь Coat: вершины тела (плечи/рукава), у которых луч по нормали
+    не попадает в пальто (или попадает ближе target), выносят ближайшие вершины пальто наружу."""
+    me = ob.data
+    kd = None
+    total = 0
+    for it in range(iters):
+        bm = bmesh.new()
+        bm.from_mesh(me)
+        bm.verts.ensure_lookup_table()
+        cb = BVHTree.FromBMesh(bm)
+        kd = kdtree.KDTree(len(bm.verts))
+        for v in bm.verts:
+            kd.insert(v.co, v.index)
+        kd.balance()
+        bad = []
+        for bv in BODY_VN:
+            co, n = bv
+            if not (0.9 < co.z < 1.43 and 0.12 < abs(co.x) < 0.52):
+                continue
+            h = cb.ray_cast(co + n * 0.002, n, 0.3)
+            if h[0] is None or (h[0] - co).length < target * 0.6:
+                bad.append((co, n))
+        if not bad:
+            break
+        disp = {}
+        for co, n in bad:
+            for _, i, d in kd.find_range(co, 0.08):
+                w = min(1.0, 1.4 * (1.0 - d / 0.08))
+                want = (co + n * target) - bm.verts[i].co
+                shift = want.dot(n) * w
+                if shift > 0 and shift > disp.get(i, (0.0, None))[0]:
+                    disp[i] = (shift, n)
+        for i, (sh, n) in disp.items():
+            bm.verts[i].co += n * sh
+        total += len(disp)
+        bm.to_mesh(me)
+        bm.free()
+        me.update()
+        log("   cover_fix iter", it, "непокрытых вершин тела", len(bad), "сдвинуто", len(disp))
+    return total
+
+
 def sleeve_fix(ob, min_clear=0.014, iters=8):
     """Рукава: вершины и центры граней глубже min_clear от руки выносятся по нормали руки
     (вектора смещения сглаживаются по соседям, чтобы не было шипов)."""
@@ -1018,6 +1104,9 @@ objs["Coat"].vertex_groups.new(name="_slv")
 subsurf_apply(objs["Coat"], 1)
 subsurf_n = orient_outward(objs["Coat"])
 log("  прижим Coat:", refit(objs["Coat"], 0.025, 0.020), "перевёрнуто граней", subsurf_n)
+BODY_VN = [(v.co.copy(), v.normal.copy()) for v in body.data.vertices]
+log("  shoulder_snap Coat:", shoulder_snap(objs["Coat"]))
+log("  cover_fix Coat:", cover_fix(objs["Coat"]))
 log("строю Shirt (+ Subd 1)")
 objs["Shirt"] = make_object("Shirt", build_shirt(), "Shirt")
 subsurf_apply(objs["Shirt"], 1)
