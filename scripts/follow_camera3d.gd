@@ -8,7 +8,7 @@ const YAW_DEG := 45.0
 const PITCH_DEG := 50.0
 const DISTANCE := 25.0
 ## Видимая высота области в метрах (size при KEEP_HEIGHT). Портрет 720x1280: ширина = size * 9/16.
-const ZOOM_SIZE := 7.5
+const ZOOM_SIZE := 9.0
 ## Точка фокуса по высоте: уровень груди героини.
 const FOCUS_HEIGHT := 0.9
 const LOOK_AHEAD := 2.5
