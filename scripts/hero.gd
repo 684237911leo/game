@@ -1,48 +1,53 @@
 extends Node2D
-## Героиня: ходит по пути на AStar-сетке карты (world.gd), по тапу/клику.
+## Героиня: ходит по пути на AStar-сетке карты (world_map.gd) по тапу/клику.
+## Состояния: IDLE, WALK, ATTACK, DEAD. Кадры и параметры анимаций — scripts/hero_anim.gd.
 
 signal arrived
+signal attack_finished
+signal died
+signal revived
 
 const HeroDirs = preload("res://scripts/hero_dirs.gd")
+const HeroAnim = preload("res://scripts/hero_anim.gd")
+
+enum State { IDLE, WALK, ATTACK, DEAD }
 
 const SPEED := 260.0
-const TARGET_HEIGHT := 180.0
-const FRAME_PATH := "res://assets/hero/cell_%d.png"
-const FRAME_COUNT := 8
-const BOB_AMP := 2.5
-const SQUASH_AMP := 0.03
+const REVIVE_DELAY := 2.5
 const MARKER_HW := 22.0
 const MARKER_HH := 11.0
 
 ## Назначается из main.gd (WorldMap с find_path / world_to_grid / grid_to_world).
 var world = null
-## Текущая скорость на экране (для камеры: look-ahead).
+## Текущая скорость на экране (для камеры: look-ahead). Ненулевая только при ходьбе.
 var velocity := Vector2.ZERO
+## true, пока есть путь (в том числе когда героиня стоит в атаке и ждёт продолжения).
 var is_moving := false
 
+var _state: int = State.IDLE
 var _path := PackedVector2Array()
 var _idx := 0
 var _dir_name := "S"
 var _facing := Vector2(0.0, 1.0)
-var _frames: Array = []
+var _anim := "idle"
+var _anim_t := 0.0
+var _anim_done := false
+var _revive_left := 0.0
+## anim -> Array (ряд) -> Array (кадр) -> Texture2D или null.
+var _textures: Dictionary = {}
 var _use_fallback := true
-var _base_scale := Vector2.ONE
-var _walk_t := 0.0
 var _time := 0.0
-var _bob := 0.0
-var _sq := 0.0
 
 var _sprite: Sprite2D
 var _marker: Node2D
 
 
 func _ready() -> void:
-	_frames = []
-	for i in FRAME_COUNT:
-		_frames.append(_load_texture(FRAME_PATH % i))
+	_load_textures()
 	_sprite = Sprite2D.new()
 	_sprite.name = "Sprite"
 	_sprite.centered = false
+	_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	add_child(_sprite)
 	_marker = Node2D.new()
 	_marker.name = "TargetMarker"
@@ -51,7 +56,8 @@ func _ready() -> void:
 	_marker.visible = false
 	add_child(_marker)
 	_marker.draw.connect(_draw_marker)
-	_apply_frame()
+	_play("idle")
+	_update_visuals()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -68,9 +74,13 @@ func get_cell() -> Vector2i:
 	return world.world_to_grid(position)
 
 
-## Строит путь до клетки и начинает движение (новая цель заменяет старую).
+func get_state() -> int:
+	return _state
+
+
+## Строит путь до клетки. Во время атаки путь ждёт окончания удара; при смерти игнорируется.
 func move_to_cell(cell: Vector2i) -> void:
-	if world == null:
+	if world == null or _state == State.DEAD:
 		return
 	var from_cell: Vector2i = world.world_to_grid(position)
 	var pts: PackedVector2Array = world.find_path(from_cell, cell)
@@ -84,13 +94,42 @@ func move_to_cell(cell: Vector2i) -> void:
 	is_moving = true
 	_marker.global_position = pts[pts.size() - 1]
 	_marker.visible = true
+	if _state == State.IDLE:
+		_set_state(State.WALK)
+
+
+## Удар в текущем направлении. Героиня стоит; после удара идёт дальше, если есть путь.
+func attack() -> void:
+	if _state != State.IDLE and _state != State.WALK:
+		return
+	velocity = Vector2.ZERO
+	_set_state(State.ATTACK)
+
+
+## Смерть: проигрывается один раз, затем воскрешение через REVIVE_DELAY секунд.
+func die() -> void:
+	if _state == State.DEAD:
+		return
+	_path = PackedVector2Array()
+	is_moving = false
+	velocity = Vector2.ZERO
+	_marker.visible = false
+	_revive_left = REVIVE_DELAY
+	_set_state(State.DEAD)
+	died.emit()
 
 
 func _process(delta: float) -> void:
 	_time += delta
-	if is_moving:
+	if _state == State.WALK:
 		_step(delta)
-	_update_visuals(delta)
+	elif _state == State.DEAD:
+		_revive_left -= delta
+		if _revive_left <= 0.0:
+			_revive()
+	_anim_t += delta
+	_check_anim_end()
+	_update_visuals()
 	if _marker.visible:
 		_marker.queue_redraw()
 	queue_redraw()
@@ -120,62 +159,110 @@ func _finish() -> void:
 	velocity = Vector2.ZERO
 	_path = PackedVector2Array()
 	_marker.visible = false
+	_set_state(State.IDLE)
 	arrived.emit()
 
 
 func _set_facing(dir: Vector2) -> void:
 	_facing = dir
 	velocity = dir * SPEED
-	var nm: String = HeroDirs.dir_name_from_vector(dir)
-	if nm != _dir_name:
-		_dir_name = nm
-		_apply_frame()
+	_dir_name = HeroDirs.dir_name_from_vector(dir)
 
 
-func _update_visuals(delta: float) -> void:
-	var target_bob := 0.0
-	var target_sq := 0.0
-	if is_moving:
-		_walk_t += delta
-		var s := sin(_walk_t * TAU * 2.0)
-		target_bob = s * BOB_AMP
-		target_sq = s * SQUASH_AMP
-	var k := 1.0 - exp(-12.0 * delta)
-	_bob = lerpf(_bob, target_bob, k)
-	_sq = lerpf(_sq, target_sq, k)
-	_sprite.position = Vector2(0.0, _bob)
-	_sprite.scale = _base_scale * Vector2(1.0 + _sq, 1.0 - _sq)
+func _set_state(s: int) -> void:
+	_state = s
+	match s:
+		State.IDLE:
+			_play("idle")
+		State.WALK:
+			_play("walk")
+		State.ATTACK:
+			_play("attack")
+		State.DEAD:
+			_play("death")
 
 
-func _apply_frame() -> void:
-	var idx: int = HeroDirs.DIR_TO_CELL.get(_dir_name, 0)
-	var tex = null
-	if idx >= 0 and idx < _frames.size():
-		tex = _frames[idx]
+func _play(anim: String) -> void:
+	_anim = anim
+	_anim_t = 0.0
+	_anim_done = false
+
+
+## Конец одноразовой анимации (attack / death).
+func _check_anim_end() -> void:
+	if _anim_done:
+		return
+	var info: Dictionary = HeroAnim.ANIMS[_anim]
+	if bool(info["loop"]):
+		return
+	if _anim_t * float(info["fps"]) >= float(info["frames"]):
+		_anim_done = true
+		if _state == State.ATTACK:
+			_set_state(State.WALK if is_moving else State.IDLE)
+			attack_finished.emit()
+
+
+func _revive() -> void:
+	_set_state(State.IDLE)
+	revived.emit()
+
+
+func _update_visuals() -> void:
+	var entry: Array = HeroAnim.DIR_TABLES[_anim][_dir_name]
+	var row: int = entry[0]
+	var flip: bool = entry[1]
+	var tex: Texture2D = _frame_texture(row)
 	if tex == null:
 		_use_fallback = true
 		_sprite.visible = false
 		_sprite.texture = null
+		return
+	_use_fallback = false
+	_sprite.visible = true
+	_sprite.texture = tex
+	_sprite.flip_h = flip
+	_sprite.scale = Vector2.ONE * HeroAnim.scale_for(_anim)
+	_sprite.offset = HeroAnim.origin_offset(_anim, tex)
+
+
+## Текущий кадр выбранного ряда по времени анимации.
+func _frame_texture(row: int) -> Texture2D:
+	var rows: Array = _textures.get(_anim, [])
+	if row < 0 or row >= rows.size():
+		return null
+	var frames: Array = rows[row]
+	var info: Dictionary = HeroAnim.ANIMS[_anim]
+	var n := int(info["frames"])
+	var idx := int(_anim_t * float(info["fps"]))
+	if bool(info["loop"]):
+		idx = idx % n
 	else:
-		_use_fallback = false
-		_sprite.visible = true
-		_sprite.texture = tex
-		_sprite.flip_h = HeroDirs.DIR_FLIP.get(_dir_name, false)
-		# Ноги (низ по центру) совпадают с origin героя.
-		_sprite.offset = Vector2(-tex.get_width() * 0.5, -tex.get_height())
-		var k: float = TARGET_HEIGHT / float(tex.get_height())
-		_base_scale = Vector2.ONE * k
-	queue_redraw()
+		idx = mini(idx, n - 1)
+	if idx >= frames.size():
+		return null
+	return frames[idx]
+
+
+func _load_textures() -> void:
+	_textures = {}
+	for key in HeroAnim.ANIMS.keys():
+		var anim: String = key
+		var info: Dictionary = HeroAnim.ANIMS[anim]
+		var rows: Array = []
+		for r in int(info["rows"]):
+			var frames: Array = []
+			for f in int(info["frames"]):
+				frames.append(_load_texture(HeroAnim.frame_path(anim, r, f)))
+			rows.append(frames)
+		_textures[anim] = rows
 
 
 func _draw() -> void:
 	_draw_shadow()
 	if _use_fallback:
 		# Запасная капсула, если кадров ещё нет. Низ капсулы = origin.
-		draw_set_transform(Vector2(0.0, _bob), 0.0, Vector2(1.0 + _sq, 1.0 - _sq))
 		draw_rect(Rect2(-16.0, -134.0, 32.0, 134.0), Color(0.42, 0.30, 0.22))
 		draw_circle(Vector2(0.0, -134.0), 16.0, Color(0.80, 0.68, 0.58))
-		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 		draw_line(Vector2(0.0, -60.0), Vector2(0.0, -60.0) + _facing * 28.0, Color(1.0, 0.9, 0.5, 0.8), 3.0)
 
 
