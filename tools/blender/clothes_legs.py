@@ -24,7 +24,7 @@ BODY_GLB = REPO + "/models/adapted_body.glb"
 OUT_BLEND = REPO + "/source_art/clothes_legs.blend"
 PREV_PATTERN = REPO + "/docs/models/clothes_legs_%s.png"
 
-TRI_BUDGET = {"Pants": 1300, "Boots": 1000, "Gloves": 800, "Gloves_Trim": 160}
+TRI_BUDGET = {"Pants": 1300, "Boots": 1150, "Gloves": 1100, "Gloves_Trim": 160}
 TRI_TOTAL_LIMIT = 3500
 POSE_ANGLE = 0.35
 PEN_LIMIT = 0.02   # м, допустимое проникновение
@@ -41,7 +41,7 @@ MATS = {
 
 # Высоты срезов (м). Штаны: от талии (1.02) до голени, скрыты ботфортами с 0.40.
 PANTS_Z = (0.40, 1.02)
-BOOT_TOP_Z = 0.50          # колено
+BOOT_TOP_Z = 0.47          # под коленом (сустав колена на z~0.48)
 # Руки: t вдоль предплечья, 0 = локоть, 1 = конец кисти
 GLOVE_T = (0.235, 1.10)    # низ краги (от манжета вверх не берём) .. кончики пальцев
 TRIM_T = (0.20, 0.235)     # золотой манжет
@@ -97,12 +97,17 @@ def pre_arm(side):
 
 # ---------- смещение от тела (м) ----------
 def off_pants(c):
-    return 0.011
+    # в промежности и ягодицах (вогнутая складка) треугольники режут тело по хорде,
+    # поэтому там отступ больше: +0.9 см в центре складки
+    crotch = 0.0
+    if 0.70 <= c.z <= 0.98 and abs(c.x) < 0.14:
+        crotch = 0.009 * (1.0 - abs(c.x) / 0.14)
+    return 0.011 + crotch
 
 
 def off_boots(c):
     # голенище 1.8 см; у верхнего края отворот до +0.8 см
-    return 0.018 + 0.008 * min(1.0, max(0.0, (c.z - 0.42) / 0.08))
+    return 0.018 + 0.008 * min(1.0, max(0.0, (c.z - 0.40) / 0.07))
 
 
 def off_gloves(c):

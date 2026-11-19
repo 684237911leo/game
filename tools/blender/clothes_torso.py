@@ -123,6 +123,19 @@ if stray is not None:
     # в рабочей сцене её нет (сам файл тела не меняется).
     bpy.data.objects.remove(stray, do_unlink=True)
 
+
+def reset_pose():
+    """Bind-поза (identity). В glb после импорта скелет стоит в позе с кватернионами,
+    и вычисленное тело смещается на ~0.45 м относительно сетки; сетка в bind-позе."""
+    for pb in arm.pose.bones:
+        pb.rotation_mode = "QUATERNION"
+        pb.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+        pb.location = (0.0, 0.0, 0.0)
+        pb.scale = (1.0, 1.0, 1.0)
+    bpy.context.view_layer.update()
+
+
+reset_pose()
 BV = np.array([v.co[:] for v in body.data.vertices])
 BODY_VERTS = [tuple(v.co) for v in body.data.vertices]
 BODY_POLYS = [tuple(p.vertices) for p in body.data.polygons]
@@ -169,6 +182,28 @@ def arm_pts(s):
     return C, R
 
 
+ARM_BVH = {}
+
+
+def arm_bvh(s):
+    """BVH только по граням руки (и плеча), чтобы рукав не прилипал к торсу."""
+    if s not in ARM_BVH:
+        faces = []
+        for p in body.data.polygons:
+            vs = [body.data.vertices[i].co for i in p.vertices]
+            if all(s * v.x > 0.10 and v.z > 0.85 for v in vs):
+                faces.append(tuple(p.vertices))
+        ARM_BVH[s] = BVHTree.FromPolygons(BODY_VERTS, faces)
+    return ARM_BVH[s]
+
+
+def snap_to_arm(p, s, off):
+    loc, nrm, _, dist = arm_bvh(s).find_nearest(p)
+    if loc is None or dist > 0.12:
+        return p
+    return loc + nrm * off
+
+
 def sleeve_rings(s, off, n=12):
     C, R = arm_pts(s)
     rings, frames = [], []
@@ -184,7 +219,7 @@ def sleeve_rings(s, off, n=12):
         U = T.cross(ref).normalized()
         V = T.cross(U).normalized()
         r = R[i] + off
-        pts = [c + (U * math.cos(t) + V * math.sin(t)) * r for t in ang(n)]
+        pts = [snap_to_arm(c + (U * math.cos(t) + V * math.sin(t)) * r, s, off) for t in ang(n)]
         rings.append(pts)
         frames.append((c, U, V, r))
     return rings, frames
@@ -574,7 +609,7 @@ def deform_test():
                 if gap > w[2]:
                     w[2], w[3] = gap, case
             pb.rotation_euler = (0.0, 0.0, 0.0)
-    bpy.context.view_layer.update()
+    reset_pose()
     for name, (depth, dcase, gap, gcase) in worst.items():
         log(f"  {name}: макс. проникновение {depth * 100:.1f} см ({dcase or '-'}), "
             f"макс. отрыв +{gap * 100:.1f} см ({gcase or '-'})")

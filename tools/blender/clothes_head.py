@@ -90,13 +90,13 @@ def tri_count(me):
 
 # ---------------------------------------------------------------- тулья + поля
 
-CROWN_ROWS = [  # (z, rx, ry) — околыш, узкая талия, тулья, купол
-    (1.625, 0.100, 0.110),
-    (1.640, 0.118, 0.128),
-    (1.662, 0.120, 0.130),
-    (1.676, 0.112, 0.122),
-    (1.720, 0.110, 0.120),
-    (1.800, 0.105, 0.115),
+CROWN_ROWS = [  # (z, rx, ry) — низ тульи (сядет на волосы), околыш, тулья чуть сужается, купол
+    (1.616, 0.098, 0.108),
+    (1.636, 0.106, 0.116),
+    (1.652, 0.110, 0.119),  # околыш
+    (1.668, 0.107, 0.116),
+    (1.720, 0.104, 0.113),
+    (1.785, 0.098, 0.106),
 ]
 NC = 32
 BRIM_Z = 1.68
@@ -121,7 +121,7 @@ def crown_geo():
             d = (r + 1) * NC + i
             F.append((a, b, c, d))
     top = len(V)
-    V.append(Vector((0.0, 0.0, 1.83)))
+    V.append(Vector((0.0, 0.0, 1.80)))
     last = (rows - 1) * NC
     for i in range(NC):
         F.append((last + i, last + (i + 1) % NC, top))
@@ -240,13 +240,19 @@ def feather_geo():
             F.append((rings[j][k], rings[j][k2], rings[j + 1][k2], rings[j + 1][k]))
     # перья: 10 вытянутых лепестков, каждый — 3 ряда (край, ребро, край)
     rng = random.Random(7)
-    NPET, NU = 10, 5
-    for k in range(NPET):
-        t = min(0.95, max(0.25, 0.3 + 0.068 * k + rng.uniform(-0.02, 0.02)))
+    # 12 длинных лепестков веером + 6 коротких внутренних у основания (пышность)
+    petals = []
+    for k in range(12):
+        t = min(0.98, max(0.35, 0.35 + 0.056 * k + rng.uniform(-0.015, 0.015)))
+        d = Vector((0.45 + 0.45 * rng.random(), rng.uniform(-0.9, 0.9), rng.uniform(-0.45, 0.35))).normalized()
+        petals.append((t, d, rng.uniform(0.15, 0.23), rng.uniform(0.015, 0.023)))
+    for k in range(6):
+        t = 0.22 + 0.06 * k + rng.uniform(-0.01, 0.01)
+        d = Vector((0.25 + 0.4 * rng.random(), rng.uniform(-0.8, 0.8), rng.uniform(0.1, 0.6))).normalized()
+        petals.append((t, d, rng.uniform(0.09, 0.13), rng.uniform(0.017, 0.024)))
+    NU = 5
+    for t, d, L, W in petals:
         B = bez(ctrl, t)
-        d = Vector((0.55 + 0.35 * rng.random(), rng.uniform(-0.7, 0.7), rng.uniform(-0.35, 0.25))).normalized()
-        L = rng.uniform(0.13, 0.20)
-        W = rng.uniform(0.010, 0.015)
         sv = d.cross(Vector((0, 0, 1))).normalized()
         nrm = sv.cross(d).normalized()
         base = len(V)
@@ -541,6 +547,11 @@ def check():
                 worst[ob.name] = max(worst.get(ob.name, 0), pairs)
                 if pairs:
                     print("DEFORM %s%+.2f %-10s overlap_pairs=%d" % (axis, sign * 0.35, ob.name, pairs))
+            hair_v, _ = evaluated_geo(bpy.data.objects["Hair"], dg)
+            hat_v, _ = evaluated_geo(bpy.data.objects["Hat"], dg)
+            print("DEFORM pose %s%+.2f hair_zmax=%.3f hat_zmin=%.3f hat_xmin=%.3f hat_xmax=%.3f"
+                  % (axis, sign * 0.35, max(p.z for p in hair_v),
+                     min(p.z for p in hat_v), min(p.x for p in hat_v), max(p.x for p in hat_v)))
     pb.rotation_euler = (0.0, 0.0, 0.0)
     bpy.context.view_layer.update()
     print("DEFORM worst overlap pairs over 6 poses:", worst)
