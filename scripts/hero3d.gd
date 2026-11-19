@@ -8,6 +8,7 @@ signal attack_finished
 signal died
 signal death_finished
 signal revived
+signal hp_changed(hp: int, max_hp: int)
 
 enum State { IDLE, WALK, ATTACK, DEAD }
 
@@ -24,7 +25,8 @@ const ATTACK_SPEED_SCALE := 1.4
 const DEATH_SPEED_SCALE := 1.0
 const BLEND_TIME := 0.15
 const TURN_RATE := 12.0
-const REVIVE_DELAY := 2.5
+## Воскрешение: через REVIVE_DELAY секунд после конца анимации Death, с полным HP.
+const REVIVE_DELAY := 3.0
 
 ## Шпага относительно кости WeaponSocket.R: смещение (м) и поворот (градусы, порядок YXZ).
 ## Клинок в rapier.glb вдоль -Z, рукоять около начала. Ось Y кости WeaponSocket.R = направление кисти
@@ -47,6 +49,8 @@ const BLOB_ALPHA := 0.8
 var world = null
 ## Горизонтальная скорость (м/с) — для камеры: look-ahead. Ненулевая только при ходьбе.
 var velocity := Vector3.ZERO
+var max_hp := 100
+var hp := 100
 
 var _state: int = State.IDLE
 var _path := PackedVector3Array()
@@ -91,6 +95,8 @@ func _process(delta: float) -> void:
 		_revive_timer -= delta
 		if _revive_timer <= 0.0:
 			_revive_timer = -1.0
+			hp = max_hp
+			hp_changed.emit(hp, max_hp)
 			_set_state(State.IDLE)
 			revived.emit()
 	var k := 1.0 - exp(-TURN_RATE * delta)
@@ -132,6 +138,31 @@ func die() -> void:
 		world.hide_marker()
 	_set_state(State.DEAD)
 	died.emit()
+
+
+## Урон от врагов. При hp <= 0 — смерть.
+func take_damage(amount: int) -> void:
+	if _state == State.DEAD or amount <= 0:
+		return
+	hp = maxi(hp - amount, 0)
+	hp_changed.emit(hp, max_hp)
+	if hp <= 0:
+		die()
+
+
+## Остановка без смены анимации удара: сбрасывает путь (используется боем).
+func stop() -> void:
+	_path = PackedVector3Array()
+	velocity = Vector3.ZERO
+	if world != null:
+		world.hide_marker()
+	if _state == State.WALK:
+		_set_state(State.IDLE)
+
+
+## Плавный поворот лицом к мировой точке (для удара по цели).
+func face_point(p: Vector3) -> void:
+	_face(p - position)
 
 
 ## Мгновенный поворот модели (без сглаживания), например при старте.
