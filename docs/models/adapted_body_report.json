@@ -1,0 +1,936 @@
+{
+ "inputs": {
+  "fbx": "/tmp/claude-0/-home-user-game/354ab7fc-40d7-5937-8c42-4d3716dfda7e/scratchpad/fbxout/fbx clean.fbx",
+  "rig_blend": "/home/user/game/source_art/hero_anim.blend"
+ },
+ "bone_map": {
+  "Hips": [
+   "BoneRoot",
+   "Hip",
+   "Pelvis",
+   "Waist"
+  ],
+  "Spine": [
+   "Spine01"
+  ],
+  "Chest": [
+   "Spine02",
+   "L_RibsTwist",
+   "R_RibsTwist",
+   "L_Breast",
+   "R_Breast"
+  ],
+  "Neck": [
+   "NeckTwist01",
+   "NeckTwist02"
+  ],
+  "Head": [
+   "Head",
+   "FacialBone",
+   "JawRoot",
+   "UpperJaw",
+   "L_Eye",
+   "R_Eye",
+   "Teeth01",
+   "Teeth02",
+   "Tongue01",
+   "Tongue02",
+   "Tongue03"
+  ],
+  "WeaponSocket.R": [],
+  "Shoulder.L": [
+   "L_Clavicle"
+  ],
+  "UpperArm.L": [
+   "L_Upperarm",
+   "L_UpperarmTwist01",
+   "L_UpperarmTwist02"
+  ],
+  "LowerArm.L": [
+   "L_Forearm",
+   "L_ForearmTwist01",
+   "L_ForearmTwist02",
+   "L_ElbowShareBone"
+  ],
+  "Hand.L": [
+   "L_Hand",
+   "L_Thumb1",
+   "L_Thumb2",
+   "L_Thumb3",
+   "L_Index1",
+   "L_Index2",
+   "L_Index3",
+   "L_Mid1",
+   "L_Mid2",
+   "L_Mid3",
+   "L_Ring1",
+   "L_Ring2",
+   "L_Ring3",
+   "L_Pinky1",
+   "L_Pinky2",
+   "L_Pinky3"
+  ],
+  "UpperLeg.L": [
+   "L_Thigh",
+   "L_ThighTwist01",
+   "L_ThighTwist02"
+  ],
+  "LowerLeg.L": [
+   "L_Calf",
+   "L_CalfTwist01",
+   "L_CalfTwist02",
+   "L_KneeShareBone"
+  ],
+  "Foot.L": [
+   "L_Foot"
+  ],
+  "Toes.L": [
+   "L_ToeBase",
+   "L_ToeBaseShareBone",
+   "L_BigToe1",
+   "L_IndexToe1",
+   "L_MidToe1",
+   "L_RingToe1",
+   "L_PinkyToe1"
+  ],
+  "Shoulder.R": [
+   "R_Clavicle"
+  ],
+  "UpperArm.R": [
+   "R_Upperarm",
+   "R_UpperarmTwist01",
+   "R_UpperarmTwist02"
+  ],
+  "LowerArm.R": [
+   "R_Forearm",
+   "R_ForearmTwist01",
+   "R_ForearmTwist02",
+   "R_ElbowShareBone"
+  ],
+  "Hand.R": [
+   "R_Hand",
+   "R_Thumb1",
+   "R_Thumb2",
+   "R_Thumb3",
+   "R_Index1",
+   "R_Index2",
+   "R_Index3",
+   "R_Mid1",
+   "R_Mid2",
+   "R_Mid3",
+   "R_Ring1",
+   "R_Ring2",
+   "R_Ring3",
+   "R_Pinky1",
+   "R_Pinky2",
+   "R_Pinky3"
+  ],
+  "UpperLeg.R": [
+   "R_Thigh",
+   "R_ThighTwist01",
+   "R_ThighTwist02"
+  ],
+  "LowerLeg.R": [
+   "R_Calf",
+   "R_CalfTwist01",
+   "R_CalfTwist02",
+   "R_KneeShareBone"
+  ],
+  "Foot.R": [
+   "R_Foot"
+  ],
+  "Toes.R": [
+   "R_ToeBase",
+   "R_ToeBaseShareBone",
+   "R_BigToe1",
+   "R_IndexToe1",
+   "R_MidToe1",
+   "R_RingToe1",
+   "R_PinkyToe1"
+  ]
+ },
+ "bone_notes": {
+  "Hips": "Pelvis+Hip+Waist (Waist 0.97-1.01 м лежит ниже нашего сустава Spine 1.04 м)",
+  "Spine": "Spine01; сустав модели на ~3 см ниже нашего",
+  "Chest": "Spine02 + RibsTwist + Breast (корректирующие кости груди слиты без отдельной кости)",
+  "Neck": "NeckTwist01/02; у исходника шея 1.38-1.45 м, у нас Neck 1.31-1.40 м: сдвиг ~5-7 см",
+  "Head": "Head + челюсть/глаза/язык/зубы (JawRoot, UpperJaw, L/R_Eye, FacialBone): у нас нет челюсти и глаз",
+  "Shoulder.L/R": "L/R_Clavicle",
+  "UpperArm.L/R": "ВНИМАНИЕ: кости L/R_Upperarm и L/R_Forearm в FBX без весов, их rest лежит в T-позе; суставы берутся из весовых костей UpperarmTwist01 / ForearmTwist01 / Hand",
+  "LowerArm.L/R": "Forearm + ForearmTwist01/02 + ElbowShareBone (корректирующая)",
+  "Hand.L/R": "Hand + 15 костей пальцев слиты в одну кость (у нас пальцев нет)",
+  "UpperLeg.L/R": "Thigh + ThighTwist01/02 (Thigh без весов; сустав берётся из ThighTwist01)",
+  "LowerLeg.L/R": "Calf + CalfTwist01/02 + KneeShareBone",
+  "Foot.L/R": "Foot; наш сустав лодыжки на 3.8 см выше анатомического (у нас предусмотрены сапоги)",
+  "Toes.L/R": "ToeBase + ToeBaseShareBone + 5 пальцев стопы слиты в одну кость",
+  "WeaponSocket.R": "весов нет: кость-крепление шпаги (как в hero.glb)"
+ },
+ "budget": {
+  "body": 6000,
+  "hair": 3000,
+  "scalp": 500,
+  "eyes": 300,
+  "lashes": 400
+ },
+ "tris_after_decimate": {
+  "Body": 6000,
+  "Eyelashes": 400,
+  "Eyes": 300,
+  "Hair": 3000,
+  "Scalp": 499
+ },
+ "retarget": {
+  "arm.L": {
+   "shoulder_src": [
+    0.1636,
+    0.0468,
+    1.3207
+   ],
+   "elbow_src": [
+    0.3792,
+    0.0475,
+    1.1948
+   ],
+   "wrist_src": [
+    0.5711,
+    0.0451,
+    1.0811
+   ],
+   "k_upper": 1.121,
+   "k_lower": 1.121,
+   "shoulder_offset_to_rig": [
+    0.0116,
+    0.0468,
+    0.0207
+   ],
+   "elbow_after": [
+    0.3781,
+    0.0468,
+    1.1407
+   ],
+   "elbow_rig": [
+    0.3665,
+    0.0,
+    1.12
+   ],
+   "wrist_after": [
+    0.5667,
+    0.0034,
+    0.9825
+   ],
+   "wrist_rig": [
+    0.5551,
+    -0.0434,
+    0.9618
+   ]
+  },
+  "leg.L": {
+   "hip_src": [
+    0.0886,
+    0.0015,
+    0.8771
+   ],
+   "knee_src": [
+    0.0799,
+    0.004,
+    0.4636
+   ],
+   "ankle_src": [
+    0.0724,
+    0.0168,
+    0.052
+   ],
+   "k_thigh": 0.967,
+   "k_calf": 1.032,
+   "knee_after": [
+    0.0906,
+    0.0015,
+    0.4771
+   ],
+   "knee_rig": [
+    0.092,
+    0.0,
+    0.48
+   ],
+   "ankle_after": [
+    0.0906,
+    0.0015,
+    0.052
+   ],
+   "ankle_rig": [
+    0.092,
+    0.0,
+    0.09
+   ],
+   "foot_shift": [
+    0.0182,
+    -0.0153,
+    -0.0
+   ]
+  },
+  "arm.R": {
+   "shoulder_src": [
+    -0.1631,
+    0.0469,
+    1.3222
+   ],
+   "elbow_src": [
+    -0.3804,
+    0.0481,
+    1.199
+   ],
+   "wrist_src": [
+    -0.5737,
+    0.0462,
+    1.0879
+   ],
+   "k_upper": 1.121,
+   "k_lower": 1.121,
+   "shoulder_offset_to_rig": [
+    -0.0111,
+    0.0469,
+    0.0222
+   ],
+   "elbow_after": [
+    -0.3776,
+    0.0469,
+    1.1422
+   ],
+   "elbow_rig": [
+    -0.3665,
+    0.0,
+    1.12
+   ],
+   "wrist_after": [
+    -0.5525,
+    -0.0548,
+    0.9954
+   ],
+   "wrist_rig": [
+    -0.5414,
+    -0.1017,
+    0.9732
+   ]
+  },
+  "leg.R": {
+   "hip_src": [
+    -0.0883,
+    0.0015,
+    0.8775
+   ],
+   "knee_src": [
+    -0.0796,
+    0.004,
+    0.4642
+   ],
+   "ankle_src": [
+    -0.0721,
+    0.0168,
+    0.0525
+   ],
+   "k_thigh": 0.967,
+   "k_calf": 1.032,
+   "knee_after": [
+    -0.0903,
+    0.0015,
+    0.4775
+   ],
+   "knee_rig": [
+    -0.092,
+    0.0,
+    0.48
+   ],
+   "ankle_after": [
+    -0.0903,
+    0.0015,
+    0.0525
+   ],
+   "ankle_rig": [
+    -0.092,
+    0.0,
+    0.09
+   ],
+   "foot_shift": [
+    -0.0182,
+    -0.0153,
+    -0.0
+   ]
+  }
+ },
+ "segment_stretch": {
+  "UpperArm.L": 1.121,
+  "LowerArm.L": 1.121,
+  "UpperArm.R": 1.121,
+  "LowerArm.R": 1.121,
+  "UpperLeg.L": 0.967,
+  "LowerLeg.L": 1.032,
+  "UpperLeg.R": 0.967,
+  "LowerLeg.R": 1.032
+ },
+ "weights": {
+  "Body": {
+   "verts": 3008,
+   "unweighted_after_merge": 0,
+   "max_influences": 4,
+   "zero_weight_rows": 0
+  },
+  "Eyelashes": {
+   "verts": 275,
+   "unweighted_after_merge": 0,
+   "max_influences": 1,
+   "zero_weight_rows": 0
+  },
+  "Eyes": {
+   "verts": 154,
+   "unweighted_after_merge": 0,
+   "max_influences": 1,
+   "zero_weight_rows": 0
+  },
+  "Hair": {
+   "verts": 2732,
+   "unweighted_after_merge": 0,
+   "max_influences": 2,
+   "zero_weight_rows": 0
+  },
+  "Scalp": {
+   "verts": 296,
+   "unweighted_after_merge": 0,
+   "max_influences": 2,
+   "zero_weight_rows": 0
+  }
+ },
+ "textures": [
+  {
+   "name": "skin_head_d.png",
+   "src": "Std_Skin_Head_Diffuse",
+   "size": [
+    128,
+    128
+   ],
+   "format": "PNG"
+  },
+  {
+   "name": "skin_head_n.png",
+   "src": "Std_Skin_Head_Normal",
+   "size": [
+    512,
+    512
+   ],
+   "format": "PNG"
+  },
+  {
+   "name": "skin_body_d.png",
+   "src": "Std_Skin_Body_Diffuse",
+   "size": [
+    128,
+    128
+   ],
+   "format": "PNG"
+  },
+  {
+   "name": "skin_body_n.png",
+   "src": "Std_Skin_Body_Normal",
+   "size": [
+    512,
+    512
+   ],
+   "format": "PNG"
+  },
+  {
+   "name": "skin_arm_d.png",
+   "src": "Std_Skin_Arm_Diffuse",
+   "size": [
+    128,
+    128
+   ],
+   "format": "PNG"
+  },
+  {
+   "name": "skin_arm_n.png",
+   "src": "Std_Skin_Arm_Normal",
+   "size": [
+    512,
+    512
+   ],
+   "format": "PNG"
+  },
+  {
+   "name": "skin_leg_d.png",
+   "src": "Std_Skin_Leg_Diffuse",
+   "size": [
+    128,
+    128
+   ],
+   "format": "PNG"
+  },
+  {
+   "name": "skin_leg_n.png",
+   "src": "Std_Skin_Leg_Normal",
+   "size": [
+    512,
+    512
+   ],
+   "format": "PNG"
+  },
+  {
+   "name": "hair_alpha",
+   "alpha_q": [
+    0.051,
+    0.3647
+   ],
+   "coverage_after": 0.323,
+   "coverage_before_at_0.5": 0.125
+  },
+  {
+   "name": "hair_d.png",
+   "src": "Default_Material_Transparency_Diffuse",
+   "size": [
+    512,
+    256
+   ],
+   "format": "PNG"
+  },
+  {
+   "name": "scalp_alpha",
+   "alpha_q": [
+    0.0,
+    1.0
+   ],
+   "coverage_after": 0.397,
+   "coverage_before_at_0.5": 0.397
+  },
+  {
+   "name": "scalp_d.png",
+   "src": "Scalp1_Transparency_Diffuse",
+   "size": [
+    512,
+    512
+   ],
+   "format": "PNG"
+  },
+  {
+   "name": "lash_d.png",
+   "src": "Std_Eyelash_Diffuse",
+   "size": [
+    512,
+    512
+   ],
+   "format": "PNG"
+  },
+  {
+   "name": "eye_r_d.jpg",
+   "src": "Std_Eye_R_Diffuse",
+   "size": [
+    256,
+    256
+   ],
+   "format": "JPEG"
+  },
+  {
+   "name": "eye_l_d.jpg",
+   "src": "Std_Eye_L_Diffuse",
+   "size": [
+    256,
+    256
+   ],
+   "format": "JPEG"
+  }
+ ],
+ "rotation_test": {
+  "Hips": {
+   "stretch_ratio": 1.0,
+   "stretch_abs_cm": 0.0,
+   "mesh": "Eyes",
+   "axis": "Z",
+   "verts_moved": 3008
+  },
+  "Spine": {
+   "stretch_ratio": 1.364,
+   "stretch_abs_cm": 2.32,
+   "mesh": "Body",
+   "axis": "Z",
+   "verts_moved": 2732
+  },
+  "Chest": {
+   "stretch_ratio": 1.362,
+   "stretch_abs_cm": 1.9,
+   "mesh": "Body",
+   "axis": "Z",
+   "verts_moved": 2732
+  },
+  "Neck": {
+   "stretch_ratio": 1.864,
+   "stretch_abs_cm": 2.02,
+   "mesh": "Body",
+   "axis": "Z",
+   "verts_moved": 2732
+  },
+  "Head": {
+   "stretch_ratio": 1.662,
+   "stretch_abs_cm": 1.46,
+   "mesh": "Hair",
+   "axis": "Z",
+   "verts_moved": 2732
+  },
+  "Shoulder.L": {
+   "stretch_ratio": 1.666,
+   "stretch_abs_cm": 1.48,
+   "mesh": "Body",
+   "axis": "X",
+   "verts_moved": 487
+  },
+  "UpperArm.L": {
+   "stretch_ratio": 1.626,
+   "stretch_abs_cm": 1.67,
+   "mesh": "Body",
+   "axis": "Y",
+   "verts_moved": 449
+  },
+  "LowerArm.L": {
+   "stretch_ratio": 1.384,
+   "stretch_abs_cm": 0.47,
+   "mesh": "Body",
+   "axis": "Y",
+   "verts_moved": 358
+  },
+  "Hand.L": {
+   "stretch_ratio": 1.359,
+   "stretch_abs_cm": 0.56,
+   "mesh": "Body",
+   "axis": "Y",
+   "verts_moved": 283
+  },
+  "Shoulder.R": {
+   "stretch_ratio": 1.752,
+   "stretch_abs_cm": 1.62,
+   "mesh": "Body",
+   "axis": "Z",
+   "verts_moved": 491
+  },
+  "UpperArm.R": {
+   "stretch_ratio": 1.538,
+   "stretch_abs_cm": 1.18,
+   "mesh": "Body",
+   "axis": "Z",
+   "verts_moved": 454
+  },
+  "LowerArm.R": {
+   "stretch_ratio": 1.247,
+   "stretch_abs_cm": 1.13,
+   "mesh": "Body",
+   "axis": "Z",
+   "verts_moved": 363
+  },
+  "Hand.R": {
+   "stretch_ratio": 1.361,
+   "stretch_abs_cm": 0.6,
+   "mesh": "Body",
+   "axis": "Y",
+   "verts_moved": 287
+  },
+  "WeaponSocket.R": {
+   "stretch_ratio": 1.0,
+   "stretch_abs_cm": 0.0,
+   "mesh": "",
+   "axis": "",
+   "verts_moved": 0
+  },
+  "UpperLeg.L": {
+   "stretch_ratio": 1.605,
+   "stretch_abs_cm": 1.3,
+   "mesh": "Body",
+   "axis": "Z",
+   "verts_moved": 511
+  },
+  "LowerLeg.L": {
+   "stretch_ratio": 1.186,
+   "stretch_abs_cm": 1.14,
+   "mesh": "Body",
+   "axis": "X",
+   "verts_moved": 355
+  },
+  "Foot.L": {
+   "stretch_ratio": 1.205,
+   "stretch_abs_cm": 0.52,
+   "mesh": "Body",
+   "axis": "X",
+   "verts_moved": 238
+  },
+  "Toes.L": {
+   "stretch_ratio": 1.705,
+   "stretch_abs_cm": 1.28,
+   "mesh": "Body",
+   "axis": "Y",
+   "verts_moved": 153
+  },
+  "UpperLeg.R": {
+   "stretch_ratio": 2.033,
+   "stretch_abs_cm": 1.63,
+   "mesh": "Body",
+   "axis": "Z",
+   "verts_moved": 505
+  },
+  "LowerLeg.R": {
+   "stretch_ratio": 1.226,
+   "stretch_abs_cm": 0.93,
+   "mesh": "Body",
+   "axis": "X",
+   "verts_moved": 348
+  },
+  "Foot.R": {
+   "stretch_ratio": 1.218,
+   "stretch_abs_cm": 0.55,
+   "mesh": "Body",
+   "axis": "X",
+   "verts_moved": 232
+  },
+  "Toes.R": {
+   "stretch_ratio": 1.365,
+   "stretch_abs_cm": 0.53,
+   "mesh": "Body",
+   "axis": "Z",
+   "verts_moved": 146
+  }
+ },
+ "floor": {
+  "Idle": {
+   "min_z_min": -0.0,
+   "min_z_max": 0.0,
+   "min_z_mean": 0.0
+  },
+  "Walk": {
+   "min_z_min": -0.0,
+   "min_z_max": 0.0,
+   "min_z_mean": 0.0
+  },
+  "Attack": {
+   "min_z_min": -0.0,
+   "min_z_max": 0.0,
+   "min_z_mean": -0.0
+  },
+  "Death": {
+   "min_z_min": -0.0,
+   "min_z_max": 0.0,
+   "min_z_mean": 0.0
+  }
+ },
+ "floor_fix_shifts": {
+  "Idle": {
+   "shift_min_cm": -0.55,
+   "shift_max_cm": -0.44
+  },
+  "Walk": {
+   "shift_min_cm": -0.88,
+   "shift_max_cm": 0.63
+  },
+  "Attack": {
+   "shift_min_cm": -1.44,
+   "shift_max_cm": 1.28
+  },
+  "Death": {
+   "shift_min_cm": -5.46,
+   "shift_max_cm": 0.15
+  }
+ },
+ "floor_before_fix": {
+  "Idle": {
+   "min_z_min": 0.0044,
+   "min_z_max": 0.0055,
+   "min_z_mean": 0.0051
+  },
+  "Walk": {
+   "min_z_min": -0.0063,
+   "min_z_max": 0.0088,
+   "min_z_mean": -0.0011
+  },
+  "Attack": {
+   "min_z_min": -0.0128,
+   "min_z_max": 0.0144,
+   "min_z_mean": 0.0002
+  },
+  "Death": {
+   "min_z_min": -0.0015,
+   "min_z_max": 0.0546,
+   "min_z_mean": 0.0106
+  }
+ },
+ "glb": {
+  "file_bytes": 2107796,
+  "meshes": 5,
+  "mesh_tris": {
+   "Body": 6000,
+   "Eyelashes": 400,
+   "Eyes": 300,
+   "Hair": 3000,
+   "Scalp": 499
+  },
+  "tris_total": 10199,
+  "skins": 1,
+  "joints": 22,
+  "joint_names": [
+   "Hips",
+   "Spine",
+   "Chest",
+   "Neck",
+   "Head",
+   "Shoulder.L",
+   "UpperArm.L",
+   "LowerArm.L",
+   "Hand.L",
+   "Shoulder.R",
+   "UpperArm.R",
+   "LowerArm.R",
+   "Hand.R",
+   "WeaponSocket.R",
+   "UpperLeg.L",
+   "LowerLeg.L",
+   "Foot.L",
+   "Toes.L",
+   "UpperLeg.R",
+   "LowerLeg.R",
+   "Foot.R",
+   "Toes.R"
+  ],
+  "animations": [
+   [
+    "Attack",
+    0.8333,
+    66
+   ],
+   [
+    "Death",
+    1.5,
+    66
+   ],
+   [
+    "Idle",
+    2,
+    66
+   ],
+   [
+    "Walk",
+    1,
+    66
+   ]
+  ],
+  "materials": [
+   "Skin_Head",
+   "Skin_Body",
+   "Skin_Arm",
+   "Skin_Leg",
+   "Eyelash",
+   "Eye_R",
+   "Eye_L",
+   "Hair",
+   "Scalp"
+  ],
+  "alpha_modes": {
+   "Skin_Head": "OPAQUE",
+   "Skin_Body": "OPAQUE",
+   "Skin_Arm": "OPAQUE",
+   "Skin_Leg": "OPAQUE",
+   "Eyelash": "MASK",
+   "Eye_R": "OPAQUE",
+   "Eye_L": "OPAQUE",
+   "Hair": "MASK",
+   "Scalp": "MASK"
+  },
+  "images": [
+   [
+    "skin_head_n",
+    512,
+    512,
+    "png",
+    338257
+   ],
+   [
+    "skin_head_d",
+    128,
+    128,
+    "png",
+    640
+   ],
+   [
+    "skin_body_n",
+    512,
+    512,
+    "png",
+    290715
+   ],
+   [
+    "skin_body_d",
+    128,
+    128,
+    "png",
+    640
+   ],
+   [
+    "skin_arm_n",
+    512,
+    512,
+    "png",
+    327405
+   ],
+   [
+    "skin_arm_d",
+    128,
+    128,
+    "png",
+    640
+   ],
+   [
+    "skin_leg_n",
+    512,
+    512,
+    "png",
+    319522
+   ],
+   [
+    "skin_leg_d",
+    128,
+    128,
+    "png",
+    640
+   ],
+   [
+    "lash_d",
+    512,
+    512,
+    "png",
+    94825
+   ],
+   [
+    "eye_r_d",
+    256,
+    256,
+    "jpeg",
+    11190
+   ],
+   [
+    "eye_l_d",
+    256,
+    256,
+    "jpeg",
+    11167
+   ],
+   [
+    "hair_d",
+    512,
+    256,
+    "png",
+    93271
+   ],
+   [
+    "scalp_d",
+    512,
+    512,
+    "png",
+    32818
+   ]
+  ],
+  "textures": 13,
+  "min_weight_sum": 1.0,
+  "primitives_without_weights": 0,
+  "joints_match_our_rig": true
+ }
+}
