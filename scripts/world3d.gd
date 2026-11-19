@@ -1,6 +1,9 @@
 extends Node3D
 ## Карта 36x36 клеток по 1 м в плоскости XZ (y = 0), центр карты в начале координат.
-## Земля: один ArrayMesh с цветами вершин. Препятствия: MultiMesh из примитивов (без коллайдеров).
+## Земля: одна сетка 0.5 м (ArrayMesh), веса трёх покрытий (земля, трава, камень) лежат в вершинных
+## цветах и плавно интерполируются. Шейдер смешивает три бесшовные текстуры из assets/tex/ по весам.
+## Декор (трава, камни, кости, трещины, лужи) — MultiMesh, не влияет на навигацию.
+## Препятствия: MultiMesh из примитивов (без коллайдеров).
 ## Навигация: AStarGrid2D по клеткам, 8 направлений. Маркер цели тоже здесь.
 
 const N := 36
@@ -22,22 +25,78 @@ const KIND_TREE := 1
 const KIND_GRAVE := 2
 const KIND_COLUMN := 3
 
-const GROUND_COLORS := [
-	Color(0.36, 0.33, 0.21),
-	Color(0.24, 0.34, 0.20),
-	Color(0.42, 0.34, 0.22),
-]
+## Шаг вершин земли, м. Меньше — плавнее переходы между покрытиями.
+const GROUND_STEP := 0.5
+## Одна текстура покрывает TILE_M метров; MACRO_M — крупные пятна для разбивки повторов.
+const TILE_M := 3.5
+const MACRO_M := 14.0
+## Вокруг стартовой клетки декор не ставится (радиус, м).
+const DECOR_SAFE_R := 2.0
+const TEX_DIR := "res://assets/tex/"
+const GROUND_GAIN := 2.0
+
 const MARKER_Y := 0.03
 const MARKER_INNER := 0.34
 const MARKER_OUTER := 0.46
 const MARKER_PULSE_RATE := 6.0
 const MARKER_PULSE_AMP := 0.1
 
+## Шейдер земли: fragment-only, без compute, работает в gl_compatibility.
+const GROUND_SHADER := """
+shader_type spatial;
+render_mode cull_disabled, specular_schlick_ggx;
+
+uniform sampler2D tex_dirt : source_color, filter_linear_mipmap, repeat_enable;
+uniform sampler2D tex_grass : source_color, filter_linear_mipmap, repeat_enable;
+uniform sampler2D tex_stone : source_color, filter_linear_mipmap, repeat_enable;
+uniform sampler2D tex_macro : source_color, filter_linear_mipmap, repeat_enable;
+uniform float tile_m = 3.5;
+uniform float macro_m = 14.0;
+uniform float map_half = 18.0;
+uniform float edge_w = 3.0;
+uniform vec3 far_color : source_color = vec3(0.05, 0.05, 0.06);
+uniform float fog_near = 14.0;
+uniform float fog_far = 36.0;
+uniform float fog_strength = 0.35;
+// Поднимает яркость после sRGB-декодирования тёмных текстур до средней.
+uniform float gain = 2.4;
+
+varying vec3 wpos;
+varying vec4 wcol;
+
+void vertex() {
+	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	wcol = COLOR;
+}
+
+void fragment() {
+	vec2 uv = wpos.xz / tile_m;
+	vec3 d = texture(tex_dirt, uv).rgb;
+	vec3 g = texture(tex_grass, uv * 1.37 + vec2(0.31, 0.57)).rgb;
+	vec3 s = texture(tex_stone, uv * 0.83 + vec2(0.12, 0.44)).rgb;
+	float wsum = max(wcol.r + wcol.g + wcol.b, 0.001);
+	vec3 col = (d * wcol.r + g * wcol.g + s * wcol.b) / wsum;
+	float m = texture(tex_macro, wpos.xz / macro_m).r;
+	col *= mix(0.82, 1.12, m) * gain * vec3(1.06, 0.98, 0.86);
+	// Края карты уходят в темноту.
+	float edge = max(abs(wpos.x), abs(wpos.z));
+	col = mix(far_color, col, 1.0 - smoothstep(map_half - edge_w, map_half, edge));
+	// Дальняя земля слегка темнеет (поверх общего тумана сцены).
+	float dist = distance(wpos.xz, CAMERA_POSITION_WORLD.xz);
+	col = mix(col, far_color, smoothstep(fog_near, fog_far, dist) * fog_strength);
+	ALBEDO = col;
+	ROUGHNESS = 1.0;
+	SPECULAR = 0.2;
+}
+"""
+
 var _kinds := {}
 var _astar: AStarGrid2D = null
 var _mats := {}
 var _marker: MeshInstance3D = null
 var _time := 0.0
+var _fn_grass: FastNoiseLite = null
+var _fn_stone: FastNoiseLite = null
 
 
 func _ready() -> void:
@@ -45,6 +104,7 @@ func _ready() -> void:
 	_build_astar()
 	_build_ground()
 	_build_props()
+	_build_decor()
 	_build_marker()
 
 
@@ -122,10 +182,6 @@ func _inside(c: Vector2i) -> bool:
 	return c.x >= 0 and c.y >= 0 and c.x < N and c.y < N
 
 
-func _hash(c: Vector2i) -> int:
-	return ((c.x * 73856093) ^ (c.y * 19349663)) & 0x7fffffff
-
-
 # ------------------------------------------------------------------ препятствия
 
 func _build_obstacles() -> void:
@@ -174,33 +230,93 @@ func _build_astar() -> void:
 # ------------------------------------------------------------------ земля
 
 func _build_ground() -> void:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	for j in N:
-		for i in N:
-			var col: Color = GROUND_COLORS[_hash(Vector2i(i, j)) % GROUND_COLORS.size()]
-			var x0 := (i - N * 0.5) * CELL
-			var x1 := x0 + CELL
-			var z0 := (j - N * 0.5) * CELL
-			var z1 := z0 + CELL
-			var a := Vector3(x0, 0.0, z0)
-			var b := Vector3(x1, 0.0, z0)
-			var c := Vector3(x1, 0.0, z1)
-			var d := Vector3(x0, 0.0, z1)
-			for v in [a, c, b, a, d, c]:
-				st.set_color(col)
-				st.set_normal(Vector3.UP)
-				st.add_vertex(v)
-	var mat := StandardMaterial3D.new()
-	mat.vertex_color_use_as_albedo = true
-	mat.roughness = 1.0
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_fn_grass = FastNoiseLite.new()
+	_fn_grass.seed = RNG_SEED + 11
+	_fn_grass.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	_fn_grass.frequency = 0.16
+	_fn_grass.fractal_octaves = 3
+	_fn_stone = FastNoiseLite.new()
+	_fn_stone.seed = RNG_SEED + 23
+	_fn_stone.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	_fn_stone.frequency = 0.12
+	_fn_stone.fractal_octaves = 3
+
+	var steps := int(round(N * CELL / GROUND_STEP))
+	var n := steps + 1
+	var verts := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var colors := PackedColorArray()
+	verts.resize(n * n)
+	normals.resize(n * n)
+	colors.resize(n * n)
+	for j in n:
+		for i in n:
+			var x := -HALF + i * GROUND_STEP
+			var z := -HALF + j * GROUND_STEP
+			var k := j * n + i
+			verts[k] = Vector3(x, 0.0, z)
+			normals[k] = Vector3.UP
+			colors[k] = _ground_weights(Vector2(x, z))
+	var indices := PackedInt32Array()
+	indices.resize(steps * steps * 6)
+	var w := 0
+	for j in steps:
+		for i in steps:
+			var a := j * n + i
+			var b := a + 1
+			var c := a + n
+			var d := c + 1
+			indices[w] = a
+			indices[w + 1] = c
+			indices[w + 2] = b
+			indices[w + 3] = b
+			indices[w + 4] = c
+			indices[w + 5] = d
+			w += 6
+
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+
+	var shader := Shader.new()
+	shader.code = GROUND_SHADER
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
+	mat.set_shader_parameter("tex_dirt", _load_tex("ground_dirt.png"))
+	mat.set_shader_parameter("tex_grass", _load_tex("ground_grass.png"))
+	mat.set_shader_parameter("tex_stone", _load_tex("ground_stone.png"))
+	mat.set_shader_parameter("tex_macro", _load_tex("ground_macro.png"))
+	mat.set_shader_parameter("tile_m", TILE_M)
+	mat.set_shader_parameter("macro_m", MACRO_M)
+	mat.set_shader_parameter("map_half", HALF)
+	mat.set_shader_parameter("gain", GROUND_GAIN)
+
 	var mi := MeshInstance3D.new()
 	mi.name = "Ground"
-	mi.mesh = st.commit()
+	mi.mesh = mesh
 	mi.material_override = mat
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
+
+
+## Веса покрытий в точке карты: r = земля, g = трава, b = камень. Нормируются в шейдере.
+func _ground_weights(p: Vector2) -> Color:
+	var grass := smoothstep(0.0, 0.3, _fn_grass.get_noise_2d(p.x, p.y))
+	var stone := smoothstep(0.26, 0.5, _fn_stone.get_noise_2d(p.x, p.y))
+	var dirt := (1.0 - grass) * (1.0 - stone)
+	return Color(dirt, grass, stone)
+
+
+func _load_tex(file: String) -> Texture2D:
+	var tex := load(TEX_DIR + file) as Texture2D
+	if tex == null:
+		push_warning("Нет текстуры %s (запусти tools/gen_textures.py и --import)" % file)
+	return tex
 
 
 # ------------------------------------------------------------------ объекты (MultiMesh)
@@ -248,31 +364,32 @@ func _prototype(kind: int, v: int) -> ArrayMesh:
 
 
 func _parts_stone(parts: Array, v: int) -> void:
-	var stone := _mat("stone", Color(0.40, 0.40, 0.42))
+	# Тёмный сланец, сферы с большим числом сегментов (гладкая нормаль), сплюснутые по высоте.
+	var stone := _mat("stone", Color(0.20, 0.20, 0.22))
 	var s := SphereMesh.new()
 	s.radius = 0.42 if v == 0 else 0.36
 	s.height = 0.5
-	s.radial_segments = 6
-	s.rings = 4
-	_part(parts, s, Transform3D(Basis(), Vector3(0.0, 0.25, 0.0)), stone)
+	s.radial_segments = 12
+	s.rings = 7
+	_part(parts, s, Transform3D(Basis().scaled(Vector3(1.0, 0.85, 0.9)), Vector3(0.0, 0.2, 0.0)), stone)
 	if v == 1:
 		var s2 := SphereMesh.new()
 		s2.radius = 0.22
 		s2.height = 0.3
-		s2.radial_segments = 6
-		s2.rings = 4
-		_part(parts, s2, Transform3D(Basis(), Vector3(0.28, 0.15, 0.12)), stone)
+		s2.radial_segments = 10
+		s2.rings = 6
+		_part(parts, s2, Transform3D(Basis(), Vector3(0.28, 0.12, 0.12)), stone)
 
 
 func _parts_tree(parts: Array, v: int) -> void:
-	var wood := _mat("wood", Color(0.20, 0.14, 0.09))
+	var wood := _mat("wood", Color(0.12, 0.09, 0.06))
 	var trunk_h := 2.0 if v == 0 else 1.4
 	var trunk := CylinderMesh.new()
 	trunk.top_radius = 0.07
 	trunk.bottom_radius = 0.12
 	trunk.height = trunk_h
-	trunk.radial_segments = 6
-	trunk.rings = 1
+	trunk.radial_segments = 10
+	trunk.rings = 2
 	_part(parts, trunk, Transform3D(Basis(), Vector3(0.0, trunk_h * 0.5, 0.0)), wood)
 	# [доля высоты ствола, азимут градусы, наклон от вертикали градусы, длина]
 	var branches := [
@@ -290,15 +407,15 @@ func _parts_tree(parts: Array, v: int) -> void:
 		br.top_radius = 0.01
 		br.bottom_radius = 0.035
 		br.height = length
-		br.radial_segments = 5
+		br.radial_segments = 6
 		br.rings = 1
 		var basis := Basis(Quaternion(Vector3.UP, d))
 		_part(parts, br, Transform3D(basis, Vector3(0.0, h, 0.0) + d * length * 0.5), wood)
 
 
 func _parts_grave(parts: Array) -> void:
-	var stone := _mat("grave", Color(0.33, 0.33, 0.31))
-	var cross := _mat("cross", Color(0.46, 0.46, 0.43))
+	var stone := _mat("grave", Color(0.22, 0.22, 0.21))
+	var cross := _mat("cross", Color(0.34, 0.34, 0.32))
 	var tomb := BoxMesh.new()
 	tomb.size = Vector3(0.6, 0.9, 0.16)
 	_part(parts, tomb, Transform3D(Basis(), Vector3(0.0, 0.45, 0.0)), stone)
@@ -311,7 +428,8 @@ func _parts_grave(parts: Array) -> void:
 
 
 func _parts_column(parts: Array, v: int) -> void:
-	var stone := _mat("column", Color(0.50, 0.47, 0.42))
+	# Светлый известняк: силуэт колонны читается на тёмной земле.
+	var stone := _mat("column", Color(0.58, 0.55, 0.50))
 	var base := BoxMesh.new()
 	base.size = Vector3(0.62, 0.2, 0.62)
 	_part(parts, base, Transform3D(Basis(), Vector3(0.0, 0.1, 0.0)), stone)
@@ -320,17 +438,20 @@ func _parts_column(parts: Array, v: int) -> void:
 	shaft.top_radius = 0.2
 	shaft.bottom_radius = 0.25
 	shaft.height = shaft_h
-	shaft.radial_segments = 8
-	shaft.rings = 1
+	shaft.radial_segments = 16
+	shaft.rings = 4
 	_part(parts, shaft, Transform3D(Basis(), Vector3(0.0, 0.2 + shaft_h * 0.5, 0.0)), stone)
 	if v == 0:
 		var cap := BoxMesh.new()
 		cap.size = Vector3(0.66, 0.16, 0.66)
 		_part(parts, cap, Transform3D(Basis(), Vector3(0.0, 0.2 + shaft_h + 0.08, 0.0)), stone)
 	else:
-		var rubble := BoxMesh.new()
-		rubble.size = Vector3(0.34, 0.16, 0.3)
-		_part(parts, rubble, Transform3D(Basis(), Vector3(0.42, 0.08, 0.25)), stone)
+		var rubble := SphereMesh.new()
+		rubble.radius = 0.2
+		rubble.height = 0.22
+		rubble.radial_segments = 10
+		rubble.rings = 5
+		_part(parts, rubble, Transform3D(Basis().scaled(Vector3(1.2, 0.7, 1.0)), Vector3(0.42, 0.08, 0.25)), stone)
 
 
 func _part(parts: Array, mesh: Mesh, xf: Transform3D, mat: Material) -> void:
@@ -362,6 +483,195 @@ func _mat(key: String, col: Color) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	m.albedo_color = col
 	m.roughness = 0.95
+	_mats[key] = m
+	return m
+
+
+# ------------------------------------------------------------------ декор (не блокирует путь)
+
+func _build_decor() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = RNG_SEED + 77
+	var start := grid_to_world(START_CELL)
+	var tufts: Array = []
+	var pebbles: Array = []
+	var bones: Array = []
+	var skulls: Array = []
+	var cracks: Array = []
+	var puddles: Array = []
+	for j in N:
+		for i in N:
+			var c := Vector2i(i, j)
+			if _kinds.has(c):
+				continue
+			var base := grid_to_world(c)
+			if Vector2(base.x - start.x, base.z - start.z).length() < DECOR_SAFE_R:
+				continue
+			# Каждый тип тянет свой кусок клетки; позиция внутри клетки случайная.
+			if rng.randf() < 0.3:
+				tufts.append(_scatter_xform(base, rng, 0.0, rng.randf_range(0.7, 1.2)))
+			if rng.randf() < 0.1:
+				pebbles.append(_scatter_xform(base, rng, 0.02, rng.randf_range(0.7, 1.4)))
+			if rng.randf() < 0.025:
+				bones.append(_scatter_xform(base, rng, 0.02, 1.0))
+			if rng.randf() < 0.012:
+				skulls.append(_scatter_xform(base, rng, 0.02, rng.randf_range(0.9, 1.1)))
+			if rng.randf() < 0.035:
+				cracks.append(_scatter_xform(base, rng, 0.006, rng.randf_range(0.8, 1.3)))
+			if rng.randf() < 0.018:
+				puddles.append(_scatter_xform(base, rng, 0.004, rng.randf_range(0.8, 1.2)))
+	_add_multimesh("Decor_Tufts", _proto_tuft(), tufts)
+	_add_multimesh("Decor_Pebbles", _proto_pebble(), pebbles)
+	_add_multimesh("Decor_Bones", _proto_bone(), bones)
+	_add_multimesh("Decor_Skulls", _proto_skull(), skulls)
+	_add_multimesh("Decor_Cracks", _proto_crack(), cracks)
+	_add_multimesh("Decor_Puddles", _proto_puddle(), puddles)
+
+
+func _scatter_xform(base: Vector3, rng: RandomNumberGenerator, y: float, s: float) -> Transform3D:
+	var off := Vector3(rng.randf_range(-0.42, 0.42), y, rng.randf_range(-0.42, 0.42))
+	var basis := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(s, s, s))
+	return Transform3D(basis, Vector3(base.x, 0.0, base.z) + off)
+
+
+func _add_multimesh(node_name: String, proto: Mesh, xforms: Array) -> void:
+	if xforms.is_empty():
+		return
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = proto
+	mm.instance_count = xforms.size()
+	for i in xforms.size():
+		mm.set_instance_transform(i, xforms[i])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.name = node_name
+	mmi.multimesh = mm
+	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mmi)
+
+
+## Пучок сухой травы: 4 вытянутых лезвия разного наклона, цвет от корня (тёмный) к кончику (блёклый).
+func _proto_tuft() -> ArrayMesh:
+	var parts: Array = []
+	var mat := _vmat("tuft")
+	for k in 4:
+		var yaw := float(k) * TAU / 4.0 + 0.4
+		var lean := 0.04 + 0.03 * float(k % 2)
+		var h := 0.42 + 0.08 * float(k % 3)
+		_part(parts, _blade(h * 1.5, 0.045, lean * 1.5), Transform3D(Basis(Vector3.UP, yaw), Vector3(0.0, 0.0, 0.0)), mat)
+	return _combine(parts)
+
+
+func _blade(h: float, w: float, lean: float) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var root := Color(0.20, 0.18, 0.11)
+	var tip := Color(0.56, 0.50, 0.32)
+	var a := Vector3(-w, 0.0, 0.0)
+	var b := Vector3(w, 0.0, 0.0)
+	var t := Vector3(lean, h, 0.0)
+	for p in [[a, root], [b, root], [t, tip]]:
+		st.set_color(p[1])
+		st.set_normal(Vector3.UP)
+		st.add_vertex(p[0])
+	var mesh := st.commit()
+	return mesh
+
+
+func _proto_pebble() -> ArrayMesh:
+	var parts: Array = []
+	var s := SphereMesh.new()
+	s.radius = 0.12
+	s.height = 0.14
+	s.radial_segments = 8
+	s.rings = 4
+	_part(parts, s, Transform3D(Basis(), Vector3(0.0, 0.05, 0.0)), _mat("pebble", Color(0.30, 0.29, 0.27)))
+	return _combine(parts)
+
+
+func _proto_bone() -> ArrayMesh:
+	var parts: Array = []
+	var mat := _mat("bone", Color(0.42, 0.39, 0.33))
+	var shaft := CylinderMesh.new()
+	shaft.top_radius = 0.022
+	shaft.bottom_radius = 0.022
+	shaft.height = 0.26
+	shaft.radial_segments = 6
+	shaft.rings = 1
+	_part(parts, shaft, Transform3D(Basis(Vector3.FORWARD, PI * 0.5), Vector3(0.0, 0.03, 0.0)), mat)
+	for e in [-0.13, 0.13]:
+		var knob := SphereMesh.new()
+		knob.radius = 0.04
+		knob.height = 0.08
+		knob.radial_segments = 6
+		knob.rings = 3
+		_part(parts, knob, Transform3D(Basis(), Vector3(e, 0.03, 0.0)), mat)
+	return _combine(parts)
+
+
+func _proto_skull() -> ArrayMesh:
+	var parts: Array = []
+	var mat := _mat("skull", Color(0.46, 0.43, 0.37))
+	var cranium := SphereMesh.new()
+	cranium.radius = 0.1
+	cranium.height = 0.18
+	cranium.radial_segments = 10
+	cranium.rings = 6
+	_part(parts, cranium, Transform3D(Basis(), Vector3(0.0, 0.09, 0.0)), mat)
+	var jaw := BoxMesh.new()
+	jaw.size = Vector3(0.1, 0.04, 0.07)
+	_part(parts, jaw, Transform3D(Basis(), Vector3(0.0, 0.02, 0.06)), mat)
+	return _combine(parts)
+
+
+## Трещина: зигзаг из четырёх полос тёмной краски на земле, без освещения.
+func _proto_crack() -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var dark := Color(0.14, 0.11, 0.08)
+	var pts := [Vector2(-0.45, 0.0), Vector2(-0.22, 0.07), Vector2(-0.02, -0.04), Vector2(0.2, 0.06), Vector2(0.45, -0.02)]
+	for k in pts.size() - 1:
+		var p0: Vector2 = pts[k]
+		var p1: Vector2 = pts[k + 1]
+		var dir := (p1 - p0).normalized()
+		var nrm := Vector2(-dir.y, dir.x) * 0.011
+		var q := [p0 - nrm, p0 + nrm, p1 + nrm, p1 - nrm]
+		for idx in [0, 1, 2, 0, 2, 3]:
+			st.set_color(dark)
+			st.set_normal(Vector3.UP)
+			st.add_vertex(Vector3(q[idx].x, 0.0, q[idx].y))
+	var mesh := st.commit()
+	var m := _vmat("crack")
+	mesh.surface_set_material(0, m)
+	return mesh
+
+
+func _proto_puddle() -> ArrayMesh:
+	var parts: Array = []
+	var disc := CylinderMesh.new()
+	disc.top_radius = 0.24
+	disc.bottom_radius = 0.24
+	disc.height = 0.004
+	disc.radial_segments = 12
+	disc.rings = 1
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.08, 0.07, 0.05, 0.3)
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.roughness = 0.05
+	m.metallic = 0.4
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_part(parts, disc, Transform3D(Basis(), Vector3(0.0, 0.002, 0.0)), m)
+	return _combine(parts)
+
+
+## Материал с цветом из вершин (для декора, где каждая вершина своего цвета).
+func _vmat(key: String) -> StandardMaterial3D:
+	if _mats.has(key):
+		return _mats[key]
+	var m := StandardMaterial3D.new()
+	m.vertex_color_use_as_albedo = true
+	m.roughness = 1.0
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
 	_mats[key] = m
 	return m
 
