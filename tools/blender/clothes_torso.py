@@ -44,7 +44,9 @@ BONES = [
 ANGLE = 0.35
 TRI_BUDGET = 4500
 OFF_SHIRT = 0.018
-OFF_COAT = 0.040
+OFF_COAT = 0.035
+SLEEVE_OFF_SHIRT = 0.016
+SLEEVE_OFF_COAT = 0.040
 OFF_BELT = 0.042
 OFF_SASH = 0.046
 
@@ -56,11 +58,10 @@ TORSO = [
     (1.05, 0.110, -0.022, 0.076),
     (1.11, 0.117, -0.012, 0.085),
     (1.17, 0.133, -0.007, 0.107),
-    (1.23, 0.190, 0.016, 0.094),
-    (1.29, 0.195, 0.029, 0.076),
-    (1.35, 0.188, 0.032, 0.049),
-    (1.40, 0.066, 0.005, 0.072),
-    (1.44, 0.072, -0.006, 0.085),
+    (1.23, 0.175, 0.016, 0.094),
+    (1.29, 0.178, 0.029, 0.076),
+    (1.35, 0.150, 0.032, 0.055),
+    (1.40, 0.068, 0.005, 0.072),
 ]
 _ZS = np.array([r[0] for r in TORSO])
 _AS = np.array([r[1] for r in TORSO])
@@ -69,7 +70,7 @@ _BS = np.array([r[3] for r in TORSO])
 
 SHIRT_ZS = [0.88, 0.93, 0.99, 1.05, 1.11, 1.17, 1.23, 1.29, 1.35, 1.40]
 COAT_ZS = [0.66, 0.72, 0.78, 0.84, 0.88, 0.93, 0.99, 1.02, 1.05, 1.11, 1.17,
-           1.23, 1.29, 1.35, 1.40, 1.44]
+           1.23, 1.29, 1.35, 1.40]
 
 
 def log(*a):
@@ -88,6 +89,8 @@ def torso_at(z):
 def garment_params(z, off, flare=0.0):
     """Эллипс одежды на высоте z. flare - расклёш юбки ниже бёдер."""
     a, cy, b = torso_at(z)
+    # у шеи одежда плотнее: офсет плавно уменьшается выше 1.28 м
+    off = off * (1.0 - 0.5 * min(1.0, max(0.0, (z - 1.28) / 0.12)))
     f = flare * min(1.0, max(0.0, (0.88 - z) / 0.22))
     return a + off + f, cy, b + off + 0.5 * f
 
@@ -156,7 +159,7 @@ def arm_radius(s, A, B):
             d = (P - (A + AB * t)).length
             if d < 0.08:
                 ds.append(d)
-    r = float(np.percentile(ds, 90)) if ds else 0.05
+    r = float(np.percentile(ds, 50)) if ds else 0.05
     log(f"  радиус руки s={s:+d} отрезок {tuple(round(c, 2) for c in A)}->{tuple(round(c, 2) for c in B)}: "
         f"{r:.3f} м по {len(ds)} вершинам")
     return r
@@ -319,7 +322,7 @@ def build_shirt():
     drop_faces(bm, lambda c: c.z > 1.20 and c.y < garment_params(c.z, 0.0)[1]
                and abs(c.x) < 0.5 * (c.z - 1.20))
     for s in (+1, -1):
-        rings, _ = sleeve_rings(s, OFF_SHIRT)
+        rings, _ = sleeve_rings(s, SLEEVE_OFF_SHIRT)
         tube(bm, rings)
     return bm
 
@@ -349,7 +352,7 @@ def build_coat():
     # разрезы юбки спереди и сзади
     drop_faces(bm, lambda c: c.z < 0.86 and abs(c.x) < 0.045)
     for s in (+1, -1):
-        rings, _ = sleeve_rings(s, OFF_COAT)
+        rings, _ = sleeve_rings(s, SLEEVE_OFF_COAT)
         tube(bm, rings)
         lapel(bm, s)
     return bm
@@ -375,7 +378,7 @@ def build_trim():
             N.append(n)
         ribbon(bm, P, N, 0.009)
         # манжета: кольцо у запястья
-        rings, frames = sleeve_rings(s, OFF_COAT)
+        rings, frames = sleeve_rings(s, SLEEVE_OFF_COAT)
         cuff = rings[-1]
         cN = [((f[1] * math.cos(t) + f[2] * math.sin(t))).normalized() for f, t in
               zip([frames[-1]] * len(ang(12)), ang(12))]
@@ -384,7 +387,7 @@ def build_trim():
     # воротник: верхнее кольцо камзола
     P, N = [], []
     for t in ang(64):
-        p, n = ell_pt(1.44, t, OFF_COAT + 0.004)
+        p, n = ell_pt(1.40, t, OFF_COAT + 0.004)
         P.append(p)
         N.append(n)
     ribbon(bm, P, N, 0.012, closed=True)
@@ -429,12 +432,12 @@ def build_sash():
     bm = bmesh.new()
     # узел на левом боку спереди
     kc, kn = front_pt(0.07, 1.09, OFF_SASH + 0.004)
-    kc = kc + kn * 0.014
+    kc = kc + kn * 0.010
     bmesh.ops.create_icosphere(bm, subdivisions=1, radius=1.0,
-                               matrix=Matrix.Translation(kc) @ Matrix.Diagonal(Vector((0.032, 0.02, 0.034))).to_4x4())
+                               matrix=Matrix.Translation(kc) @ Matrix.Diagonal(Vector((0.024, 0.014, 0.026))).to_4x4())
     prism_band(bm, 1.045, 1.115, OFF_SASH, 0.008, 24)
     # два свисающих хвоста
-    for (x0, x1, z1), w in (((0.07, 0.12, 0.80), 0.030), ((0.06, 0.09, 0.84), 0.026)):
+    for (x0, x1, z1), w in (((0.07, 0.11, 0.84), 0.026), ((0.06, 0.09, 0.87), 0.022)):
         P, N = [], []
         for k in range(6):
             t = k / 5.0
@@ -474,10 +477,10 @@ def make_object(name, bm, mat_name):
 
 def make_materials():
     specs = {
-        "Coat": ((0.42, 0.03, 0.06, 1), 0.0, 0.55),
+        "Coat": ((0.13, 0.008, 0.025, 1), 0.0, 0.5),
         "Shirt": ((0.92, 0.91, 0.88, 1), 0.0, 0.7),
         "Belt": ((0.30, 0.17, 0.09, 1), 0.0, 0.5),
-        "Sash": ((0.45, 0.04, 0.05, 1), 0.0, 0.6),
+        "Sash": ((0.24, 0.012, 0.02, 1), 0.0, 0.55),
         "Gold": ((1.0, 0.72, 0.28, 1), 1.0, 0.35),
     }
     for name, (col, metal, rough) in specs.items():
@@ -583,7 +586,7 @@ def deform_test():
     for g in garments:
         gv, _ = evaluate(g)
         base[g.name] = [bvh.find_nearest(v)[3] for v in gv]
-    worst = {g.name: [0.0, "", 0.0, ""] for g in garments}
+    worst = {g.name: [0.0, "", 0.0, "", None] for g in garments}
     for bone in BONES:
         pb = arm.pose.bones[bone]
         for axis in range(3):
@@ -597,22 +600,27 @@ def deform_test():
             case = f"{bone} {'XYZ'[axis]}"
             for g in garments:
                 gv, _ = evaluate(g)
-                depth, gap = 0.0, 0.0
+                depth, gap, deep_i = 0.0, 0.0, -1
                 for i, v in enumerate(gv):
                     loc, nrm, _, dist = bvh.find_nearest(v)
-                    if (v - loc).dot(nrm) < 0.0:
-                        depth = max(depth, dist)
+                    if (v - loc).dot(nrm) < 0.0 and dist > depth:
+                        depth = dist
+                        deep_i = i
                     gap = max(gap, dist - base[g.name][i])
                 w = worst[g.name]
                 if depth > w[0]:
                     w[0], w[1] = depth, case
+                    w[4] = (deep_i, tuple(round(c, 3) for c in gv[deep_i]),
+                            [(g.vertex_groups[x.group].name, round(x.weight, 2)) for x in g.data.vertices[deep_i].groups])
                 if gap > w[2]:
                     w[2], w[3] = gap, case
             pb.rotation_euler = (0.0, 0.0, 0.0)
     reset_pose()
-    for name, (depth, dcase, gap, gcase) in worst.items():
+    for name, (depth, dcase, gap, gcase, deep) in worst.items():
         log(f"  {name}: макс. проникновение {depth * 100:.1f} см ({dcase or '-'}), "
             f"макс. отрыв +{gap * 100:.1f} см ({gcase or '-'})")
+        if deep:
+            log(f"    глубокая вершина {deep[0]} {deep[1]} веса {deep[2]}")
 
 
 deform_test()
@@ -625,6 +633,7 @@ def render_views():
     scene.cycles.device = "CPU"
     scene.cycles.samples = 16
     scene.cycles.use_denoising = False
+    scene.view_settings.view_transform = "Standard"
     scene.render.resolution_x = 540
     scene.render.resolution_y = 810
     scene.render.image_settings.file_format = "PNG"
