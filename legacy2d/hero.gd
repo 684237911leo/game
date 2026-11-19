@@ -7,8 +7,8 @@ signal attack_finished
 signal died
 signal revived
 
-const HeroDirs = preload("res://scripts/hero_dirs.gd")
-const HeroAnim = preload("res://scripts/hero_anim.gd")
+const HeroDirs = preload("res://legacy2d/hero_dirs.gd")
+const HeroAnim = preload("res://legacy2d/hero_anim.gd")
 
 enum State { IDLE, WALK, ATTACK, DEAD }
 

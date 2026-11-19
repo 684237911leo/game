@@ -1494,8 +1494,8 @@ def main():
     check_and_report(arm, meshes)
 
     os.makedirs(MODELS_DIR, exist_ok=True)
-    bpy.ops.wm.save_as_mainfile(filepath=os.path.join(MODELS_DIR, "hero.blend"))
-    print("SAVED", os.path.join(MODELS_DIR, "hero.blend"))
+    bpy.ops.wm.save_as_mainfile(filepath=os.path.join(os.path.dirname(MODELS_DIR), "source_art", "hero.blend"))
+    print("SAVED", os.path.join(os.path.dirname(MODELS_DIR), "source_art", "hero.blend"))
 
     bpy.ops.export_scene.gltf(
         filepath=os.path.join(MODELS_DIR, "hero.glb"),

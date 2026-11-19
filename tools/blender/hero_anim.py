@@ -33,7 +33,7 @@ import numpy as np
 from mathutils import Matrix, Quaternion, Vector
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if not os.path.isfile(os.path.join(ROOT, "models", "hero.blend")):
+if not os.path.isfile(os.path.join(ROOT, "source_art", "hero.blend")):
     ROOT = "/home/user/game"
 MODELS = os.path.join(ROOT, "models")
 DOCS = os.path.join(ROOT, "docs", "models")
@@ -452,7 +452,7 @@ def build_action(name, n, pose_fn, R, arm, meshes, sword=None):
 # ---------------------------------------------------------------- шпага
 
 def attach_sword(arm, R):
-    path = os.path.join(MODELS, "rapier.blend")
+    path = os.path.join(os.path.dirname(MODELS), "source_art", "rapier.blend")
     with bpy.data.libraries.load(path, link=False) as (src, dst):
         dst.objects = [n for n in src.objects if n == "Rapier"]
     sw = bpy.data.objects["Rapier"]
@@ -527,7 +527,7 @@ def glb_animations(path):
 # ---------------------------------------------------------------- main
 
 def main():
-    bpy.ops.wm.open_mainfile(filepath=os.path.join(MODELS, "hero.blend"))
+    bpy.ops.wm.open_mainfile(filepath=os.path.join(os.path.dirname(MODELS), "source_art", "hero.blend"))
     scene = bpy.context.scene
     scene.render.fps = FPS
     scene.render.fps_base = 1.0
@@ -667,7 +667,7 @@ def main():
 
     arm.animation_data.action = bpy.data.actions["Idle"]
     scene.frame_set(0)
-    out_blend = os.path.join(MODELS, "hero_anim.blend")
+    out_blend = os.path.join(os.path.dirname(MODELS), "source_art", "hero_anim.blend")
     bpy.ops.wm.save_as_mainfile(filepath=out_blend)
     print("SAVED", out_blend)
     print("REPORT", json.dumps(report))

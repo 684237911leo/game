@@ -25,7 +25,7 @@ from mathutils import Vector
 ROOT = "/home/user/game"
 MODELS_DIR = os.path.join(ROOT, "models")
 DOCS_DIR = os.path.join(ROOT, "docs", "models")
-BLEND_PATH = os.path.join(MODELS_DIR, "rapier.blend")
+BLEND_PATH = os.path.join(os.path.dirname(MODELS_DIR), "source_art", "rapier.blend")
 GLB_PATH = os.path.join(MODELS_DIR, "rapier.glb")
 
 BLADE, GOLD, LEATHER = 0, 1, 2
