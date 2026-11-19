@@ -33,7 +33,7 @@ MATS = {
     "Boots": ((0.16, 0.09, 0.05), 0.0, 0.55),
     "Boots_Cuff": ((0.28, 0.16, 0.08), 0.0, 0.55),
     "Leather": ((0.10, 0.06, 0.035), 0.0, 0.55),
-    "Gloves": ((0.20, 0.11, 0.06), 0.0, 0.50),
+    "Gloves": ((0.075, 0.035, 0.018), 0.0, 0.45),
     "Gold": ((1.00, 0.76, 0.32), 1.0, 0.35),
 }
 
@@ -46,7 +46,7 @@ HEEL_H = 0.035
 GAUNT_T = (0.225, 0.54)
 TRIM_T = (0.20, 0.245)
 HAND_T = 0.47               # кисть как отдельный меш начинается отсюда
-HAND_OFF = 0.0045
+HAND_OFF = 0.0060
 HAND_TRIS = 430
 PANTS_TRIS = 1450
 
@@ -526,7 +526,7 @@ def make_gloves():
         h = new_object("gh_" + side, hand_bm(side), ["Gloves"])
         n0 = tri_count(h)
         apply_modifier(h, "DECIMATE", decimate_type="COLLAPSE", ratio=min(1.0, HAND_TRIS / n0))
-        push_out(h, 0.0035)
+        push_out(h, 0.0045)
         parts.append(h)
     ob = join_objects(parts, "Gloves")
     finish(ob)

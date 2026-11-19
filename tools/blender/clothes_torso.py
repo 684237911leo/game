@@ -304,7 +304,7 @@ def boundary_loops(me):
 def sleeve_frames(s):
     S, E, W = arm_axis(s)
     ud, ld = (E - S).normalized(), (W - E).normalized()
-    cs = [S + Vector((-s * 0.05, 0.0, 0.012)), S, S.lerp(E, 0.38), S.lerp(E, 0.72),
+    cs = [S + Vector((-s * SLV_IN, 0.0, 0.0)), S, S.lerp(E, 0.38), S.lerp(E, 0.72),
           E - ud * 0.045, E, E + ld * 0.045, E.lerp(W, 0.55), W - ld * 0.045]
     return cs, ld
 
@@ -328,6 +328,7 @@ def ray_radius(s, c, d, default):
     return dist if loc is not None else default
 
 
+SLV_IN = float(os.environ.get('SLV_IN', '0.12'))
 RCAP = [0.060, 0.105, 0.100, 0.090, 0.078, 0.074, 0.068, 0.060, 0.056]
 
 
@@ -834,6 +835,49 @@ def shoulder_snap(ob, off=0.026, reach=0.06, smooth_iters=2):
     return len(snapped)
 
 
+def add_yoke(ob, off=0.026, edge_off=0.010):
+    """Заплатка плеча: копия плечевого участка тела (|x| 0.14-0.42, z 1.12-1.40), вынесенная
+    на off по нормали (к краю - edge_off, чтобы край прятался под пальто). Закрывает щель между
+    торсом и рукавом, где тело проглядывало."""
+    bm = bmesh.new()
+    bm.from_mesh(body.data)
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=2e-4)
+    X0, X1, Z0, Z1 = 0.14, 0.42, 1.12, 1.40
+
+    def inside(co):
+        return X0 < abs(co.x) < X1 and Z0 < co.z < Z1
+    kill = [f for f in bm.faces if not all(inside(v.co) for v in f.verts)]
+    bmesh.ops.delete(bm, geom=kill, context="FACES")
+    bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+    bm.normal_update()
+
+    def fade(co):
+        d = min(abs(co.x) - X0, X1 - abs(co.x), co.z - Z0, Z1 - co.z)
+        t = max(0.0, min(1.0, d / 0.05))
+        t = t * t * (3 - 2 * t)
+        return edge_off + (off - edge_off) * t
+    for v in bm.verts:
+        v.co = v.co + v.normal * fade(v.co)
+    bmesh.ops.triangulate(bm, faces=bm.faces)
+    me = bpy.data.meshes.new("yoke")
+    bm.to_mesh(me)
+    bm.free()
+    tmp = bpy.data.objects.new("yoke", me)
+    bpy.context.scene.collection.objects.link(tmp)
+    bpy.context.view_layer.objects.active = tmp
+    dm = tmp.modifiers.new("dec", "DECIMATE")
+    dm.ratio = 0.18
+    bpy.ops.object.modifier_apply(modifier=dm.name)
+    bpy.ops.object.select_all(action="DESELECT")
+    tmp.select_set(True)
+    ob.select_set(True)
+    bpy.context.view_layer.objects.active = ob
+    bpy.ops.object.join()
+    ob.select_set(False)
+    ob.data.update()
+    return len(me.polygons)
+
+
 def cover_fix(ob, target=0.024, iters=20):
     """Тело не должно торчать сквозь Coat: вершины тела (плечи/рукава), у которых луч по нормали
     не попадает в пальто (или попадает ближе target), выносят ближайшие вершины пальто наружу."""
@@ -1105,8 +1149,6 @@ subsurf_apply(objs["Coat"], 1)
 subsurf_n = orient_outward(objs["Coat"])
 log("  прижим Coat:", refit(objs["Coat"], 0.025, 0.020), "перевёрнуто граней", subsurf_n)
 BODY_VN = [(v.co.copy(), v.normal.copy()) for v in body.data.vertices]
-log("  shoulder_snap Coat:", shoulder_snap(objs["Coat"]))
-log("  cover_fix Coat:", cover_fix(objs["Coat"]))
 log("строю Shirt (+ Subd 1)")
 objs["Shirt"] = make_object("Shirt", build_shirt(), "Shirt")
 subsurf_apply(objs["Shirt"], 1)
@@ -1163,6 +1205,7 @@ for s in (+1, -1):
         I.append((inw - nrm * inw.dot(nrm)).normalized())
     ribbon_edge(tbm, P, N, I, 0.008, 0.0025)
 objs["Coat_Trim"] = make_object("Coat_Trim", tbm, "Gold")
+log("  add_yoke Coat: граней", add_yoke(objs["Coat"]))
 objs["Buttons"] = make_object("Buttons", build_buttons(COAT_BVH), "Gold")
 objs["Belt"] = make_object("Belt", build_belt(COAT_BVH), "Belt")
 objs["Buckle"] = make_object("Buckle", build_buckle(COAT_BVH), "Gold")

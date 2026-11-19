@@ -39,7 +39,7 @@ const MODEL_YAW_OFFSET := 0.0
 const TORCH_POS := Vector3(0.0, 1.7, 0.0)
 const TORCH_COLOR := Color(1.0, 0.72, 0.42)
 const TORCH_RANGE := 7.0
-const TORCH_ENERGY := 1.0
+const TORCH_ENERGY := 0.6
 const BLOB_SIZE := 1.9
 const BLOB_ALPHA := 0.8
 
