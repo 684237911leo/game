@@ -37,7 +37,7 @@ MATS = {
     "Gold": ((1.00, 0.76, 0.32), 1.0, 0.35),
 }
 
-PANTS_Z = (0.52, 1.06)      # низ скрыт под голенищем, верх чуть выше бёдер
+PANTS_Z = (0.42, 1.06)      # низ скрыт под голенищем, верх чуть выше бёдер
 SHAFT_Z = (0.13, 0.565)     # голенище
 CUFF_Z = (0.455, 0.585)     # отворот
 SHAFT_OFF = 0.018
@@ -221,8 +221,8 @@ def pants_bm():
 
     def smooth(bm):
         # гладкий шов в промежности: лапласово сглаживание только там
-        vs = [v for v in bm.verts if abs(v.co.x) < 0.085 and 0.66 < v.co.z < 0.97]
-        for _ in range(8):
+        vs = [v for v in bm.verts if abs(v.co.x) < 0.07 and 0.70 < v.co.z < 0.92 and v.co.y < 0.0]
+        for _ in range(4):
             bmesh.ops.smooth_vert(bm, verts=vs, factor=0.5, use_axis_x=True,
                                   use_axis_y=True, use_axis_z=True)
         for v in vs:   # после сглаживания не уходим внутрь тела
@@ -302,7 +302,7 @@ def section_ring(center, e1, e2, n, rmax=0.2):
     return c, ray_radii(c, e1, e2, n, rmax)
 
 
-def leg_sections(side, zs, n=18):
+def leg_sections(side, zs, n=16):
     sx = 0.092 if side == "L" else -0.092
     out = []
     for z in zs:
@@ -327,7 +327,7 @@ def foot_profile(side):
     ymin = min(v.y for v in vs)
     ymax = max(v.y for v in vs)
     ys = []
-    steps = 10
+    steps = 8
     prof = []
     for i in range(steps + 1):
         y = ymax - (ymax - ymin) * i / steps
@@ -360,7 +360,7 @@ def foot_upper_bm(side):
     prof, ymin, ymax = foot_profile(side)
     ext = 0.035                       # удлинённый носок
     rings = []
-    n = 12
+    n = 10
     # профиль идёт от пятки (ymax) к носку (ymin) -> обход e1=x, e2=z даёт нормали наружу
     heel = [(ymax + 0.016, 0.55), (ymax + 0.008, 0.85)]
     seq = []
@@ -377,12 +377,12 @@ def foot_upper_bm(side):
         seq.append((y, ylast[1], ylast[2] * (1.0 - 0.12 * f), ylast[3], max(k, 0.05)))
     for y, x, top, w, k in seq:
         zt = top + 0.014
-        zb = SOLE_H - 0.004
+        zb = 0.004
         hh = max((zt - zb) / 2 * k, 0.004)
         hw = (w + 0.016) * k
         # у верха (подъёма) стопа шире только внизу: низ плотнее
         c = Vector((x, y, (zt + zb) / 2 if k > 0.99 else zb + hh))
-        rings.append(superellipse_ring(c, max(hw, 0.004), hh, n))
+        rings.append(superellipse_ring(c, max(hw, 0.004), hh, n, 3.6))
     bm = bmesh.new()
     vr = loft(bm, rings)
     # закрыть носок и пятку
@@ -396,7 +396,7 @@ def foot_upper_bm(side):
 
 def sole_bm(side, prof, ymax, tip):
     sx = prof[0][1]
-    n = 10
+    n = 8
     bm = bmesh.new()
     # подошва: выступает на 6 мм за контур
     rings = []
@@ -407,7 +407,7 @@ def sole_bm(side, prof, ymax, tip):
     seq.append((tip - 0.006, 0.85, prof[-1][3] * 0.9))
     seq.append((tip - 0.012, 0.35, prof[-1][3] * 0.6))
     for y, k, w in seq:
-        hw = (w + 0.012) * k
+        hw = (w + 0.022) * k
         rings.append(superellipse_ring(Vector((sx, y, (SOLE_H - 0.003) / 2)), max(hw, 0.004),
                                        (SOLE_H + 0.003) / 2, n, 3.0))
     vr = loft(bm, rings)
@@ -455,7 +455,7 @@ def cuff_bm(side):
     rings = []
     for (c, rs), z in zip(secs, zs):
         s = (z - CUFF_Z[0]) / (CUFF_Z[1] - CUFF_Z[0])
-        flare = 0.0045 + (SHAFT_OFF - 0.0045 + 0.015) * smoothstep(s * 1.1)
+        flare = SHAFT_OFF + 0.003 + 0.015 * smoothstep(s * 1.1)
         rings.append(ring_pts(c, e1, e2, [r + flare for r in rs]))
     bm = bmesh.new()
     loft(bm, rings)
@@ -487,12 +487,7 @@ def make_boots_v2():
 
 def make_pants():
     ob = new_object("Pants", pants_bm(), ["Pants"])
-    n0 = tri_count(ob)
-    apply_modifier(ob, "DECIMATE", decimate_type="COLLAPSE", ratio=min(1.0, PANTS_TRIS / n0))
-    # децимация режет выпуклости по хорде -> натягиваем на тело с отступом 1.3 см
-    apply_modifier(ob, "SHRINKWRAP", target=BODY, wrap_method="NEAREST_SURFACEPOINT",
-                   wrap_mode="OUTSIDE_SURFACE", offset=0.013)
-    push_out(ob, 0.009)
+    push_out(ob, 0.008)
     finish(ob)
     return ob
 
