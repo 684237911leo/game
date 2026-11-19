@@ -1,0 +1,42 @@
+{
+  "object": "Rapier",
+  "source": "models/rapier.blend",
+  "parent_type": "BONE",
+  "parent_bone": "WeaponSocket.R",
+  "origin": "bone tail (Blender bone parenting); location below is relative to it",
+  "location": [
+    0.0,
+    -0.05,
+    0.0
+  ],
+  "rotation_quaternion": [
+    1.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "rotation_euler_xyz_deg": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "scale": [
+    1.0,
+    1.0,
+    1.0
+  ],
+  "grip_at": "palm: grip centre (rapier origin) at WeaponSocket.R head",
+  "blade_axis": "rapier +Y == bone +Y (hand direction)",
+  "rapier_length_m": 1.145,
+  "bone_head_rest_armature_m": [
+    -0.55733,
+    -0.13666,
+    0.90506
+  ],
+  "bone_tail_rest_armature_m": [
+    -0.58981,
+    -0.16315,
+    0.87781
+  ],
+  "armature_world_matrix_identity": true
+}
