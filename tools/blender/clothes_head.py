@@ -27,8 +27,8 @@ HEAD_NAMES = ["Body", "Hair", "Scalp"]
 PARTS = ["Hat", "Hat_Trim", "Feather", "Bandana", "Earring"]
 BONE = "Head"
 
-TILT = Matrix.Rotation(math.radians(-10.0), 3, "Y")  # наклон шляпы набок
-PIVOT = Vector((0.0, 0.0, 1.66))
+TILT = Matrix.Rotation(math.radians(-9.0), 3, "Y")  # наклон шляпы набок (левая сторона вверх)
+PIVOT = Vector((0.0, 0.0, 1.57))
 MARGIN = 0.006  # зазор одежды до волос/кожи, м
 
 
@@ -40,8 +40,8 @@ def wrap(a):
     return (a + math.pi) % (2 * math.pi) - math.pi
 
 
-def ell(th, rx, ry, cy=0.0):
-    return Vector((rx * math.cos(th), ry * math.sin(th) + cy, 0.0))
+def ell(th, rx, ry):
+    return 1.0 / math.sqrt((math.cos(th) / rx) ** 2 + (math.sin(th) / ry) ** 2)
 
 
 # ---------------------------------------------------------------- сцена / материалы
@@ -65,20 +65,23 @@ def make_mat(name, rgb, metallic=0.0, roughness=0.6):
 def make_materials():
     make_mat("Hat", (0.075, 0.055, 0.045), roughness=0.75)
     make_mat("Gold", (0.95, 0.72, 0.28), metallic=1.0, roughness=0.35)
-    make_mat("Feather", (0.78, 0.05, 0.05), roughness=0.5)
+    make_mat("Feather", (0.50, 0.015, 0.09), roughness=0.5)
+    make_mat("Feather_Edge", (0.17, 0.004, 0.035), roughness=0.55)
     make_mat("Bandana", (0.62, 0.04, 0.04), roughness=0.85)
 
 
-def mk(name, V, F, mat):
+def mk(name, V, F, mats, fmat=None, smooth=False):
     me = bpy.data.meshes.new(name + "_mesh")
     me.from_pydata([tuple(v) for v in V], [], [tuple(f) for f in F])
-    me.validate()
     me.update()
     ob = bpy.data.objects.new(name, me)
     bpy.context.scene.collection.objects.link(ob)
-    me.materials.append(bpy.data.materials[mat])
-    for p in me.polygons:
-        p.use_smooth = False
+    for m in mats:
+        me.materials.append(bpy.data.materials[m])
+    for i, p in enumerate(me.polygons):
+        p.use_smooth = smooth
+        if fmat:
+            p.material_index = fmat[i]
     vg = ob.vertex_groups.new(name=BONE)
     vg.add(list(range(len(V))), 1.0, "REPLACE")
     return ob
@@ -88,115 +91,151 @@ def tri_count(me):
     return sum(len(p.vertices) - 2 for p in me.polygons)
 
 
+# ---------------------------------------------------------------- радиальные замеры головы
+
+def far_hit(bvh, th, z, maxd=0.4):
+    """Наружная граница волос/головы вдоль горизонтального луча из оси головы."""
+    d = Vector((math.cos(th), math.sin(th), 0.0))
+    o = Vector((0.0, 0.0, z))
+    pos, last = o, None
+    for _ in range(14):
+        loc, n, i, dist = bvh.ray_cast(pos, d, maxd)
+        if loc is None:
+            break
+        last = loc
+        pos = loc + d * 0.0005
+    if last is None:
+        return None
+    return (last - o).dot(d)
+
+
+def smooth_ring(r, win=2, passes=2):
+    n = len(r)
+    r = [max(r[(i + k) % n] for k in range(-win, win + 1)) for i in range(n)]
+    for _ in range(passes):
+        r = [(r[i - 1] + 2 * r[i] + r[(i + 1) % n]) / 4 for i in range(n)]
+    return r
+
+
+def ring_radius(bvh, z, n, margin, fallback=None, k=1.0):
+    r = []
+    for i in range(n):
+        th = 2 * math.pi * i / n
+        h = far_hit(bvh, th, z)
+        f = (fallback(th) * k) if fallback else 0.0
+        r.append(max((h + margin) if h is not None else 0.0, f))
+    return smooth_ring(r)
+
+
 # ---------------------------------------------------------------- тулья + поля
 
-CROWN_ROWS = [  # (z, rx, ry) — низ тульи (сядет на волосы), околыш, тулья чуть сужается, купол
-    (1.616, 0.098, 0.108),
-    (1.636, 0.106, 0.116),
-    (1.652, 0.110, 0.119),  # околыш
-    (1.668, 0.107, 0.116),
-    (1.720, 0.104, 0.113),
-    (1.785, 0.098, 0.106),
+CROWN_ROWS = [  # (z, k для запаса формы) — купол с лёгким сужением к верху
+    (1.560, 1.00), (1.583, 0.99), (1.606, 0.97), (1.628, 0.93),
+    (1.645, 0.86), (1.658, 0.72), (1.668, 0.50), (1.675, 0.25),
 ]
 NC = 32
-BRIM_Z = 1.68
-BRIM_T = 0.015  # толщина полей (эквивалент Solidify 1.5 см)
-NB = 36
-EDGE_TH = [math.radians(a) for a in (-30, 90, 210)]  # середины сторон
-CORNER_TH = [math.radians(a) for a in (-90, 30, 150)]  # три угла
+BRIM_Z = 1.575
+BRIM_T = 0.015  # толщина полей 1.5 см
+CORNERS = [math.radians(a) for a in (-90, 18, 162)]  # спереди, слева, справа
+BRIM_S = [0.0, 0.45, 1.0]
 
 
-def crown_geo():
+def cf(th):
+    return max(math.exp(-(wrap(th - c) / 0.52) ** 2) for c in CORNERS)
+
+
+def crown_geo(bvh_head):
+    fb = lambda th: ell(th, 0.108, 0.120)
+    rows = [ring_radius(bvh_head, z, NC, 0.011, fb, k) for z, k in CROWN_ROWS]
     V, F = [], []
-    for z, rx, ry in CROWN_ROWS:
+    for (z, _), r in zip(CROWN_ROWS, rows):
         for i in range(NC):
             th = 2 * math.pi * i / NC
-            V.append(Vector((rx * math.cos(th), ry * math.sin(th), z)))
-    rows = len(CROWN_ROWS)
-    for r in range(rows - 1):
+            V.append(Vector((r[i] * math.cos(th), r[i] * math.sin(th), z)))
+    for r in range(len(CROWN_ROWS) - 1):
         for i in range(NC):
-            a = r * NC + i
-            b = r * NC + (i + 1) % NC
-            c = (r + 1) * NC + (i + 1) % NC
-            d = (r + 1) * NC + i
-            F.append((a, b, c, d))
+            j = (i + 1) % NC
+            F.append((r * NC + j, r * NC + i, (r + 1) * NC + i, (r + 1) * NC + j))
     top = len(V)
-    V.append(Vector((0.0, 0.0, 1.80)))
-    last = (rows - 1) * NC
+    V.append(Vector((0.0, 0.0, 1.679)))
+    last = (len(CROWN_ROWS) - 1) * NC
     for i in range(NC):
         F.append((last + i, last + (i + 1) % NC, top))
-    return V, F
+    return V, F, rows
 
 
-def brim_R(th):
-    off = min(abs(wrap(th - e)) for e in EDGE_TH)
-    return 0.175 / max(math.cos(off), 1e-3) ** 0.6  # углы ~0.27, середины 0.175
+def brim_point(th, r0, s, dz):
+    c = cf(th)
+    R = r0 + 0.118 + 0.028 * c
+    r = r0 + (R - r0) * s
+    z = BRIM_Z + (0.012 + 0.072 * c) * (s ** 1.8) - dz
+    return Vector((r * math.cos(th), r * math.sin(th), z))
 
 
-def corner_factor(th):
-    return 0.5 * (1 + math.cos(3 * (th - CORNER_TH[0])))
-
-
-def brim_H(th):
-    return 0.035 + 0.065 * corner_factor(th)  # углы загнуты сильнее
-
-
-def brim_point(th, s, dz):
-    inner = ell(th, 0.106, 0.116)
-    R = brim_R(th)
-    outer = Vector((R * math.cos(th), R * math.sin(th), 0.0))
-    p = inner + (outer - inner) * s
-    p.z = BRIM_Z + brim_H(th) * (s ** 1.7) - dz
-    return p
-
-
-def brim_geo():
+def brim_geo(r0s):
     V, F = [], []
-    rows = [0.0, 0.5, 1.0]
-    for dz in (0.0, BRIM_T):  # верхний и нижний лист
-        for s in rows:
-            for i in range(NB):
-                V.append(brim_point(2 * math.pi * i / NB, s, dz))
-    top0, bot0 = 0, 3 * NB
-    for base, flip in ((top0, True), (bot0, False)):
-        for r in range(2):
-            for i in range(NB):
-                a = base + r * NB + i
-                b = base + r * NB + (i + 1) % NB
-                c = base + (r + 1) * NB + (i + 1) % NB
-                d = base + (r + 1) * NB + i
-                F.append((a, d, c, b) if flip else (a, b, c, d))
-    for i in range(NB):  # внешний край
-        j = (i + 1) % NB
-        ta, tb = top0 + 2 * NB + i, top0 + 2 * NB + j
-        ba, bb = bot0 + 2 * NB + i, bot0 + 2 * NB + j
-        F.append((ta, ba, bb, tb))
-    for i in range(NB):  # внутренний край (под тульей)
-        j = (i + 1) % NB
-        ta, tb = top0 + i, top0 + j
-        ba, bb = bot0 + i, bot0 + j
+    ns = len(BRIM_S)
+    for dz in (0.0, BRIM_T):
+        for s in BRIM_S:
+            for i in range(NC):
+                V.append(brim_point(2 * math.pi * i / NC, r0s[i], s, dz))
+    top0, bot0 = 0, ns * NC
+    for base, up in ((top0, True), (bot0, False)):
+        for r in range(ns - 1):
+            for i in range(NC):
+                j = (i + 1) % NC
+                a, b = base + r * NC + i, base + r * NC + j
+                c, d = base + (r + 1) * NC + j, base + (r + 1) * NC + i
+                F.append((a, b, c, d) if not up else (b, a, d, c))
+    # (порядок обхода: верх смотрит вверх, низ вниз; ориентацию уточняет recalc ниже)
+    for i in range(NC):
+        j = (i + 1) % NC
+        ta, tb = top0 + (ns - 1) * NC + i, top0 + (ns - 1) * NC + j
+        ba, bb = bot0 + (ns - 1) * NC + i, bot0 + (ns - 1) * NC + j
         F.append((ta, tb, bb, ba))
+        F.append((top0 + j, top0 + i, bot0 + i, bot0 + j))
     return V, F
 
 
-def trim_geo():
-    """Золотой кант по внешнему краю полей: квадратное сечение 1.5 см."""
-    h = 0.0075
+def trim_geo(r0s):
+    """Золотой кант по внешнему краю полей."""
+    hr, hz = 0.0045, 0.0095
     V, F = [], []
-    for i in range(NB):
-        th = 2 * math.pi * i / NB
-        R = brim_R(th)
-        c = Vector((R * math.cos(th), R * math.sin(th), 0.0))
-        c.z = BRIM_Z + brim_H(th) - BRIM_T / 2
+    for i in range(NC):
+        th = 2 * math.pi * i / NC
+        c = brim_point(th, r0s[i], 1.0, BRIM_T / 2)
         ro = Vector((math.cos(th), math.sin(th), 0.0))
         zz = Vector((0.0, 0.0, 1.0))
-        for sr, sz in ((1, 1), (-1, 1), (-1, -1), (1, -1)):
-            V.append(c + ro * (sr * h) + zz * (sz * h))
-    for i in range(NB):
-        j = (i + 1) % NB
-        for k in range(4):
-            k2 = (k + 1) % 4
-            F.append((i * 4 + k, i * 4 + k2, j * 4 + k2, j * 4 + k))
+        for sr, sz in ((1, 0), (-1, 1), (-1, -1)):
+            V.append(c + ro * (sr * hr) + zz * (sz * hz))
+    for i in range(NC):
+        j = (i + 1) % NC
+        for k in range(3):
+            k2 = (k + 1) % 3
+            F.append((i * 3 + k, j * 3 + k, j * 3 + k2, i * 3 + k2))
+    return V, F
+
+
+def cockade_geo(center, radial):
+    """Золотая кокарда-диск на тулье (нормаль — радиально наружу)."""
+    n = 10
+    ax = radial.normalized()
+    u = Vector((0, 0, 1)).cross(ax).normalized()
+    v = ax.cross(u).normalized()
+    V, F = [], []
+    for side, off in ((0, 0.0), (1, 0.006)):
+        for i in range(n):
+            a = 2 * math.pi * i / n
+            V.append(center + ax * off + (u * math.cos(a) + v * math.sin(a)) * 0.019)
+    cb = len(V)
+    V.append(center)
+    ct = len(V)
+    V.append(center + ax * 0.011)
+    for i in range(n):
+        j = (i + 1) % n
+        F.append((i, j, n + j, n + i))
+        F.append((n + i, n + j, ct))
+        F.append((j, i, cb))
     return V, F
 
 
@@ -208,133 +247,198 @@ def bez(p, t):
     return u ** 3 * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t ** 3 * p3
 
 
-def feather_geo():
+def feather_geo(root):
     ctrl = [
-        Vector((0.11, 0.0, 1.76)),
-        Vector((0.16, -0.012, 1.90)),
-        Vector((0.25, -0.03, 1.95)),
-        Vector((0.33, -0.012, 1.86)),
+        root,
+        root + Vector((0.050, 0.030, 0.150)),
+        root + Vector((0.100, 0.180, 0.230)),
+        root + Vector((0.115, 0.330, 0.120)),
     ]
-    V, F = [], []
-    # стержень: шестигранная трубка, сужается к кончику
-    NS, NR = 10, 6
+    V, F, FM = [], [], []
+    NS, NR = 12, 5
     pts = [bez(ctrl, j / NS) for j in range(NS + 1)]
+    tans = [(pts[min(j + 1, NS)] - pts[max(j - 1, 0)]).normalized() for j in range(NS + 1)]
     rings = []
     for j in range(NS + 1):
-        T = (pts[min(j + 1, NS)] - pts[max(j - 1, 0)]).normalized()
-        N = T.cross(Vector((0, 0, 1)))
-        if N.length < 1e-4:
-            N = T.cross(Vector((1, 0, 0)))
-        N.normalize()
-        Bv = T.cross(N).normalized()
-        r = 0.0042 * (1 - 0.65 * j / NS)
+        T = tans[j]
+        S = (Vector((1, 0, 0)) - T * T.x).normalized()
+        Nv = T.cross(S).normalized()
+        r = 0.0035 * (1 - 0.6 * j / NS)
         ring = []
         for k in range(NR):
             a = 2 * math.pi * k / NR
             ring.append(len(V))
-            V.append(pts[j] + (N * math.cos(a) + Bv * math.sin(a)) * r)
+            V.append(pts[j] + (S * math.cos(a) + Nv * math.sin(a)) * r)
         rings.append(ring)
     for j in range(NS):
         for k in range(NR):
             k2 = (k + 1) % NR
             F.append((rings[j][k], rings[j][k2], rings[j + 1][k2], rings[j + 1][k]))
-    # перья: 10 вытянутых лепестков, каждый — 3 ряда (край, ребро, край)
-    rng = random.Random(7)
-    # 12 длинных лепестков веером + 6 коротких внутренних у основания (пышность)
-    petals = []
-    for k in range(12):
-        t = min(0.98, max(0.35, 0.35 + 0.056 * k + rng.uniform(-0.015, 0.015)))
-        d = Vector((0.45 + 0.45 * rng.random(), rng.uniform(-0.9, 0.9), rng.uniform(-0.45, 0.35))).normalized()
-        petals.append((t, d, rng.uniform(0.15, 0.23), rng.uniform(0.015, 0.023)))
-    for k in range(6):
-        t = 0.22 + 0.06 * k + rng.uniform(-0.01, 0.01)
-        d = Vector((0.25 + 0.4 * rng.random(), rng.uniform(-0.8, 0.8), rng.uniform(0.1, 0.6))).normalized()
-        petals.append((t, d, rng.uniform(0.09, 0.13), rng.uniform(0.017, 0.024)))
-    NU = 5
-    for t, d, L, W in petals:
-        B = bez(ctrl, t)
-        sv = d.cross(Vector((0, 0, 1))).normalized()
-        nrm = sv.cross(d).normalized()
-        base = len(V)
-        rowsL, rowsC, rowsR = [], [], []
-        for j in range(NU + 1):
-            u = j / NU
-            S = B + d * (L * u) + Vector((0, 0, -0.035 * u * u))
-            w = W * math.sin(math.pi * min(1.0, u) ** 0.75)
-            rowsL.append(len(V)); V.append(S - sv * w)
-            rowsC.append(len(V)); V.append(S + nrm * (0.35 * w))
-            rowsR.append(len(V)); V.append(S + sv * w)
-        for j in range(NU):
-            F.append((rowsL[j], rowsC[j], rowsC[j + 1], rowsL[j + 1]))
-            F.append((rowsC[j], rowsR[j], rowsR[j + 1], rowsC[j + 1]))
-    return V, F
+            FM.append(1)
+    # три слоя перьев-бородок по бокам стержня
+    layers = [  # (смещение по нормали, завиток, длина, угол к стержню, провис)
+        (0.000, 0.00, 1.00, math.radians(52), 0.020),
+        (0.007, 0.55, 0.84, math.radians(42), 0.030),
+        (-0.007, -0.55, 0.68, math.radians(62), 0.040),
+    ]
+    NBARB = 22
+    rows_u = [0.0, 0.25, 0.5, 0.75]
+    wprof = [0.45, 0.95, 0.80, 0.42]
+    rng = random.Random(11)
+    for li, (noff, curl, lf, ang, droop) in enumerate(layers):
+        for side in (-1, 1):
+            for b in range(NBARB):
+                t = 0.10 + 0.87 * (b + (0.5 if li == 1 else 0.0) + rng.uniform(-0.12, 0.12)) / NBARB
+                t = min(0.985, max(0.06, t))
+                P = bez(ctrl, t)
+                T = (bez(ctrl, min(1, t + 0.02)) - bez(ctrl, max(0, t - 0.02))).normalized()
+                S = (Vector((1, 0, 0)) - T * T.x).normalized()
+                Nv = T.cross(S).normalized()
+                prof = max(0.25, math.sin(math.pi * (0.06 + 0.92 * t)) ** 0.7)
+                L = 0.078 * lf * prof * rng.uniform(0.92, 1.06)
+                d = (S * side * math.cos(ang) + T * math.sin(ang)).normalized()
+                W = 0.0098 * (0.7 + 0.5 * prof)
+                wv = Nv.cross(d).normalized()
+                root0 = P + Nv * noff
+                rows = []
+                for u, wp in zip(rows_u, wprof):
+                    c = root0 + d * (L * u) + Nv * (curl * L * 0.45 * u * u) + Vector((0, 0, -droop * u * u * (L / 0.078)))
+                    rows.append((len(V), len(V) + 1))
+                    V.append(c - wv * W * wp)
+                    V.append(c + wv * W * wp)
+                tipc = root0 + d * L + Nv * (curl * L * 0.45) + Vector((0, 0, -droop * (L / 0.078)))
+                tip = len(V)
+                V.append(tipc)
+                for q in range(3):
+                    a, bq = rows[q], rows[q + 1]
+                    m = 0 if q < 2 else 1
+                    flip = side > 0
+                    f1, f2 = (a[0], a[1], bq[1]), (a[0], bq[1], bq[0])
+                    if flip:
+                        f1, f2 = f1[::-1], f2[::-1]
+                    F.append(f1); FM.append(m)
+                    F.append(f2); FM.append(m)
+                last = rows[3]
+                F.append((last[0], last[1], tip) if not side > 0 else (last[1], last[0], tip))
+                FM.append(1)
+    return V, F, FM
 
 
 # ---------------------------------------------------------------- бандана, серьги
 
-def bandana_geo():
-    V, F = [], []
+def bandana_geo(bvh_head):
     NBd = 32
-    rings = [(1.574, 0.095, 0.108, -0.004), (1.607, 0.097, 0.110, -0.004)]
-    idx = []
-    for z, rx, ry, cy in rings:
-        row = []
+    zs = [1.538, 1.559, 1.580]
+    th_k = math.radians(128)
+    rows_in, rows_out = [], []
+    for z in zs:
+        rin = ring_radius(bvh_head, z, NBd, 0.0045)
+        rows_in.append(rin)
+    V, F = [], []
+    idx_in, idx_out = [], []
+    for z, rin in zip(zs, rows_in):
+        row_i, row_o = [], []
         for i in range(NBd):
             th = 2 * math.pi * i / NBd
-            p = ell(th, rx, ry, cy)
-            p.z = z
-            row.append(len(V))
-            V.append(p)
-        idx.append(row)
+            zz = z - 0.010 * max(0.0, math.sin(th)) * 0.6  # сзади чуть ниже
+            row_i.append(len(V)); V.append(Vector((rin[i] * math.cos(th), rin[i] * math.sin(th), zz)))
+        for i in range(NBd):
+            th = 2 * math.pi * i / NBd
+            zz = z - 0.010 * max(0.0, math.sin(th)) * 0.6
+            ro = rin[i] + 0.0035
+            row_o.append(len(V)); V.append(Vector((ro * math.cos(th), ro * math.sin(th), zz)))
+        idx_in.append(row_i); idx_out.append(row_o)
+    nr = len(zs)
+    for r in range(nr - 1):
+        for i in range(NBd):
+            j = (i + 1) % NBd
+            F.append((idx_out[r][i], idx_out[r][j], idx_out[r + 1][j], idx_out[r + 1][i]))
+            F.append((idx_in[r][j], idx_in[r][i], idx_in[r + 1][i], idx_in[r + 1][j]))
     for i in range(NBd):
         j = (i + 1) % NBd
-        F.append((idx[0][i], idx[0][j], idx[1][j], idx[1][i]))
-    # узелок на затылке (икосфера, 80 треугольников)
+        F.append((idx_in[0][i], idx_in[0][j], idx_out[0][j], idx_out[0][i]))
+        F.append((idx_out[-1][i], idx_out[-1][j], idx_in[-1][j], idx_in[-1][i]))
+    # узел сзади-справа
+    kr = far_hit(bvh_head, th_k, 1.560) + 0.012
+    center = Vector((kr * math.cos(th_k), kr * math.sin(th_k), 1.552))
     bm = bmesh.new()
-    bmesh.ops.create_icosphere(bm, subdivisions=2, radius=0.018)
+    bmesh.ops.create_icosphere(bm, subdivisions=2, radius=1.0)
+    ax = Vector((math.cos(th_k), math.sin(th_k), 0))
+    tg = Vector((-math.sin(th_k), math.cos(th_k), 0))
     base = len(V)
-    center = Vector((0.0, 0.112, 1.592))
     for v in bm.verts:
-        V.append(v.co + center)
+        co = v.co
+        V.append(center + ax * (co.x * 0.011) + tg * (co.y * 0.020) + Vector((0, 0, co.z * 0.016)))
     for f in bm.faces:
         F.append(tuple(base + v.index for v in f.verts))
     bm.free()
-    # два коротких хвоста сзади
-    for side in (-1, 1):
-        rows = []
-        for j in range(5):
-            x = side * (0.006 + 0.007 * j)
-            y = 0.116 + 0.012 * j
-            z = 1.586 - 0.026 * j
-            rows.append((len(V), len(V) + 1))
-            V.append(Vector((x - 0.008, y, z)))
-            V.append(Vector((x + 0.008, y, z)))
-        for j in range(4):
-            a, b = rows[j], rows[j + 1]
-            F.append((a[0], a[1], b[1], b[0]))
+    # два хвоста вдоль волос на спину/плечи
+    for sgn, dth, w0, zend in ((1, 1.2, 0.026, 1.325), (-1, -2.6, 0.024, 1.300)):
+        NJ = 9
+        pr = []
+        for j in range(NJ):
+            u = j / (NJ - 1)
+            z = 1.548 - u * (1.548 - zend)
+            th = th_k + math.radians(dth * j) + 0.05 * math.sin(u * 5.0) * sgn
+            h = far_hit(bvh_head, th, z)
+            if h is None:
+                h = 0.11
+            r = h + 0.007 + 0.004 * math.sin(u * 7 + sgn)
+            w = w0 * (1.0 - 0.25 * u)
+            tgv = Vector((-math.sin(th), math.cos(th), 0))
+            c = Vector((r * math.cos(th), r * math.sin(th), z))
+            nrm = Vector((math.cos(th), math.sin(th), 0))
+            pr.append((c, tgv, nrm, w))
+        # заострённый (ласточкин хвост) конец
+        for layer, off in ((0, 0.0), (1, -0.003)):
+            ids = []
+            for c, tgv, nrm, w in pr:
+                ids.append((len(V), len(V) + 1))
+                V.append(c + nrm * off - tgv * w / 2)
+                V.append(c + nrm * off + tgv * w / 2)
+            c, tgv, nrm, w = pr[-1]
+            tip = len(V)
+            V.append(c + nrm * off - Vector((0, 0, 0.030)))
+            for j in range(NJ - 1):
+                a, b = ids[j], ids[j + 1]
+                q = (a[0], a[1], b[1], b[0])
+                F.append(q if layer == 0 else q[::-1])
+            a = ids[-1]
+            F.append((a[0], a[1], tip) if layer == 0 else (a[1], a[0], tip))
     return V, F
 
 
 def earring_geo():
     V, F = [], []
-    R, r = 0.012, 0.0022
-    NMj, NMn = 10, 4
+    R, r = 0.0085, 0.0016
+    NMj, NMn = 10, 3
+    phi = math.radians(50)
     for side in (-1, 1):
-        C = Vector((side * 0.125, 0.005, 1.455))
-        X = Vector((1, 0, 0))
+        C = Vector((side * 0.063, 0.012, 1.412))
+        u = Vector((math.cos(phi), math.sin(phi) * side, 0.0))
         base = len(V)
         for i in range(NMj):
             a = 2 * math.pi * i / NMj
-            dirA = Vector((0.0, math.cos(a), math.sin(a)))
+            dirA = u * math.cos(a) + Vector((0, 0, 1)) * math.sin(a)
             for k in range(NMn):
                 b = 2 * math.pi * k / NMn
-                V.append(C + dirA * (R + r * math.cos(b)) + X * (r * math.sin(b)))
+                nrm = u.cross(Vector((0, 0, 1)))
+                V.append(C + dirA * (R + r * math.cos(b)) + nrm * (r * math.sin(b)))
         for i in range(NMj):
             i2 = (i + 1) % NMj
             for k in range(NMn):
                 k2 = (k + 1) % NMn
                 F.append((base + i * NMn + k, base + i * NMn + k2,
                           base + i2 * NMn + k2, base + i2 * NMn + k))
+        # шарик под кольцом
+        bm = bmesh.new()
+        bmesh.ops.create_icosphere(bm, subdivisions=1, radius=0.0045)
+        bb = len(V)
+        for v in bm.verts:
+            V.append(v.co + C - Vector((0, 0, R + 0.006)))
+        for f in bm.faces:
+            F.append(tuple(bb + v.index for v in f.verts))
+        bm.free()
     return V, F
 
 
@@ -430,32 +534,45 @@ def build():
     make_materials()
     bvh_body = bvh_from(merged_geo(["Body"]))
     bvh_hs = bvh_from(merged_geo(HEAD_NAMES))
+    bvh_all = bvh_from(merged_geo(BODY_NAMES))
     obst = [(bvh_body, "sign"), (bvh_hs, "radial")]
 
-    # треуголка = тулья + поля (+ золотой кант отдельным объектом)
-    cv, cf = crown_geo()
-    bv, bf = brim_geo()
+    cv, cf_, rows = crown_geo(bvh_all)
+    r0s = rows[0]
+    bv, bf = brim_geo(r0s)
     off = len(cv)
     hatV = [tilt(p) for p in cv + bv]
-    hatF = cf + [tuple(i + off for i in f) for f in bf]
-    hat = mk("Hat", hatV, hatF, "Hat")
-    tv, tf = trim_geo()
-    mk("Hat_Trim", [tilt(p) for p in tv], tf, "Gold")
-    relax(hat, obst)
+    hatF = cf_ + [tuple(i + off for i in f) for f in bf]
+    hat = mk("Hat", hatV, hatF, ["Hat"], smooth=True)
+    tv, tf = trim_geo(r0s)
+    th_c = CORNERS[1]
+    ci = int(round(th_c / (2 * math.pi) * NC)) % NC
+    cr = rows[2][ci] + 0.001
+    cen = Vector((cr * math.cos(th_c), cr * math.sin(th_c), CROWN_ROWS[2][0]))
+    radial = Vector((math.cos(th_c), math.sin(th_c), 0.0))
+    kv, kf = cockade_geo(cen, radial)
+    tf2 = tf + [tuple(i + len(tv) for i in f) for f in kf]
+    mk("Hat_Trim", [tilt(p) for p in tv + kv], tf2, ["Gold"])
+    relax(hat, obst, margin=0.008)
     bvh_hat = bvh_from(world_geo(hat))
 
-    fv, ff = feather_geo()
-    mk("Feather", [tilt(p) for p in fv], ff, "Feather")
-    relax(bpy.data.objects["Feather"], obst + [(bvh_hat, "d")])
+    root = cen + radial * 0.004
+    fv, ff, fm = feather_geo(root)
+    feather = mk("Feather", [tilt(p) for p in fv], ff, ["Feather", "Feather_Edge"], fm)
+    relax(feather, obst + [(bvh_hat, "d")], margin=0.004, iters=30)
 
-    bdv, bdf = bandana_geo()
-    mk("Bandana", bdv, bdf, "Bandana")
-    relax(bpy.data.objects["Bandana"], obst + [(bvh_hat, "d")])
+    bdv, bdf = bandana_geo(bvh_all)
+    band = mk("Bandana", bdv, bdf, ["Bandana"], smooth=True)
+    relax(band, obst, margin=0.003, iters=40)
 
     ev, ef = earring_geo()
-    mk("Earring", ev, ef, "Gold")
-    relax(bpy.data.objects["Earring"], obst)
+    mk("Earring", ev, ef, ["Gold"])
+    relax(bpy.data.objects["Earring"], [(bvh_body, "sign")], margin=0.004, iters=30)
 
+    for n in PARTS:  # единые нормали
+        bm = bmesh.new(); bm.from_mesh(bpy.data.objects[n].data)
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        bm.to_mesh(bpy.data.objects[n].data); bm.free()
     report(bvh_hs)
     cleanup_and_save()
 
@@ -488,7 +605,7 @@ def cleanup_and_save():
         for d in list(coll):
             if d.users == 0:
                 coll.remove(d)
-    keep = {"Hat", "Gold", "Feather", "Bandana"}
+    keep = {"Hat", "Gold", "Feather", "Feather_Edge", "Bandana"}
     for m in list(bpy.data.materials):
         if m.name not in keep:
             bpy.data.materials.remove(m)
@@ -604,9 +721,12 @@ def check():
 
 
 def main():
-    argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else ["build"]
+    argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else ["all"]
     mode = argv[0]
-    if mode == "build":
+    if mode == "all":
+        build()
+        check()
+    elif mode == "build":
         build()
     elif mode == "check":
         check()
