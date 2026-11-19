@@ -1,30 +1,39 @@
 extends Node3D
-## Корень среза (3D): мир, героиня, камера, HUD. Тап по земле -> героиня идёт.
+## Корень среза (3D): мир, героиня, враги, бой, камера, HUD.
+## Тап по врагу -> цель (бой). Тап по земле -> цель сбрасывается, героиня идёт.
 ## Режимы (аргументы после --):
-##   --autotest           тап в 6 м -> удар -> смерть; печатает AUTOTEST3D OK или AUTOTEST3D FAIL
-##   --shots=DIR          серия кадров в DIR (3d_idle, 3d_walk_E/N/W/S, 3d_attack, 3d_death, 3d_close)
+##   --autotest           бой: тап по ближайшему врагу, авто-переключение, навык; AUTOTEST3D OK / FAIL
+##   --shots=DIR          кадры боя (3d_combat_approach/hit/skill, 3d_enemy_close), затем 3d_idle ... 3d_hand_attack_b
 ##   --screenshot=PATH    один кадр через секунду
 
 const START_CELL := Vector2i(18, 18)
 const SUN_ROT_DEG := Vector3(-55.0, 35.0, 0.0)
 const HUD_FADE_AT := 4.0
 const AUTOTEST_START_DELAY := 0.5
-const AUTOTEST_TIMEOUT := 25.0
-const AUTOTEST_TAP_CELLS := 6
+const AUTOTEST_TIMEOUT := 40.0
+const AUTOTEST_SKILL_APPROACH := 2.5
 const SHOT_IDLE_DELAY := 1.0
 const SHOT_WALK_DELAY := 0.5
 const SHOT_WALK_CELLS := 5
 const SHOT_ATTACK_DELAY := 0.3
 const SHOT_DEATH_DELAY := 1.4
 const SHOT_CLOSE_ZOOM := 3.0
+const SHOT_DEFAULT_ZOOM := 9.0
 ## Крупный план руки: видимая высота 1.6 м, фокус на груди героини.
 const SHOT_HAND_ZOOM := 1.6
+## Крупный план врага (видимая высота, м).
+const SHOT_ENEMY_ZOOM := 2.6
+## Кадр подхода: герой идёт, цель в этом радиусе.
+const SHOT_APPROACH_DIST := 4.0
+const SHOT_HIT_DELAY := 0.08
 ## Моменты удара для крупного плана (секунды от начала удара).
 const SHOT_HAND_ATTACK_A := 0.2
 const SHOT_HAND_ATTACK_B := 0.5
 const SHOT_SETTLE := 1.2
 const SHOT_WAIT_TIMEOUT := 15.0
 const SINGLE_SHOT_DELAY := 1.0
+const SKILL_BASE_MODULATE := Color(1.0, 1.0, 1.0, 0.85)
+const SKILL_FAIL_MODULATE := Color(1.0, 0.45, 0.45, 0.85)
 ## Направления для кадров ходьбы (по осям мира): E = +X, N = -Z, W = -X, S = +Z.
 const SHOT_DIRS := {
 	"E": Vector2i(1, 0),
@@ -36,17 +45,21 @@ const SHOT_DIRS := {
 @onready var world = $World
 @onready var hero = $Hero
 @onready var camera = $FollowCamera
+@onready var combat: Combat = $Combat
 @onready var sun: DirectionalLight3D = $Sun
 @onready var hint: Label = $HUD/Hint
-@onready var attack_button: Button = $HUD/Controls/AttackButton
-@onready var death_button: Button = $HUD/Controls/DeathButton
+@onready var hero_bar: ProgressBar = $HUD/HeroHP
+@onready var kills_label: Label = $HUD/Kills
+@onready var skill_button: Button = $HUD/Controls/SkillButton
+@onready var skill_bar: ProgressBar = $HUD/Controls/SkillButton/CooldownBar
 
 var _autotest := false
 var _shots_dir := ""
 var _screenshot_path := ""
-var _autotest_target := Vector2i.ZERO
-## 0: идём к цели, 1: удар, 2: смерть, 3: завершено.
-var _autotest_phase := 0
+var _autotest_done := false
+var _at_kill_seen := false
+var _at_switch_ok := false
+var _at_expected: Enemy3D = null
 
 
 func _ready() -> void:
@@ -64,16 +77,18 @@ func _ready() -> void:
 	hero.position = world.grid_to_world(START_CELL)
 	# Лицом к камере (камера стоит в направлении +X +Z).
 	hero.face_direction(Vector3(1.0, 0.0, 1.0))
-	hero.arrived.connect(_on_hero_arrived)
-	hero.attack_finished.connect(_on_attack_finished)
-	hero.death_finished.connect(_on_death_finished)
-
-	# Тестовые кнопки: Button съедает ввод, поэтому героиня по ним не идёт.
-	attack_button.pressed.connect(hero.attack)
-	death_button.pressed.connect(hero.die)
+	hero.hp_changed.connect(_on_hero_hp)
+	_on_hero_hp(hero.hp, hero.max_hp)
 
 	camera.target = hero
 	camera.set_bounds(world.get_ground_rect())
+
+	combat.setup(world, hero)
+	combat.spawn_enemies(hero.position)
+	combat.enemy_killed.connect(_on_enemy_killed)
+	_on_enemy_killed(null, null)
+
+	skill_button.pressed.connect(_on_skill_pressed)
 
 	_run_hud_fade()
 
@@ -85,14 +100,33 @@ func _ready() -> void:
 		_run_single_shot(_screenshot_path)
 
 
+func _process(_delta: float) -> void:
+	skill_bar.value = combat.skill_ready_fraction() * 100.0
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
-			var ground = _screen_to_ground(mb.position)
-			if ground != null:
-				hero.move_to(ground)
+			if _handle_tap(mb.position):
 				get_viewport().set_input_as_handled()
+
+
+## Один путь для тапа (и для касания, и для автотеста): враг под лучом -> цель;
+## иначе земля -> цель сбрасывается, героиня идёт. true, если тап что-то выбрал.
+func _handle_tap(screen_pos: Vector2) -> bool:
+	var origin: Vector3 = camera.project_ray_origin(screen_pos)
+	var dir: Vector3 = camera.project_ray_normal(screen_pos)
+	var enemy: Enemy3D = combat.pick_enemy(origin, dir)
+	if enemy != null:
+		combat.select_target(enemy)
+		return true
+	var ground = _screen_to_ground(screen_pos)
+	if ground == null:
+		return false
+	combat.clear_target()
+	hero.move_to(ground)
+	return true
 
 
 ## Луч от камеры через точку экрана -> пересечение с плоскостью y = 0.
@@ -114,58 +148,122 @@ func _run_hud_fade() -> void:
 	tw.tween_callback(hint.hide)
 
 
+# ------------------------------------------------------------------ HUD
+
+func _on_hero_hp(cur: int, mx: int) -> void:
+	hero_bar.max_value = mx
+	hero_bar.value = cur
+
+
+func _on_enemy_killed(_e, _next) -> void:
+	kills_label.text = "Убито: %d" % combat.kills
+
+
+func _on_skill_pressed() -> void:
+	if not combat.use_skill():
+		_blink_skill()
+
+
+## Не сработал (нет цели в 3 м или кулдаун): кнопка мигает красным.
+func _blink_skill() -> void:
+	var tw := create_tween()
+	tw.tween_property(skill_button, "modulate", SKILL_FAIL_MODULATE, 0.1)
+	tw.tween_property(skill_button, "modulate", SKILL_BASE_MODULATE, 0.2)
+
+
 # ------------------------------------------------------------------ --autotest
 
 func _run_autotest() -> void:
 	get_tree().create_timer(AUTOTEST_TIMEOUT).timeout.connect(_autotest_timeout)
-	await get_tree().create_timer(AUTOTEST_START_DELAY).timeout
-	var from_cell: Vector2i = world.world_to_grid(hero.position)
-	_autotest_target = from_cell + Vector2i(AUTOTEST_TAP_CELLS, 0)
-	print("AUTOTEST3D tap from=%s target=%s" % [from_cell, _autotest_target])
-	hero.move_to(world.grid_to_world(_autotest_target))
+	await _wait_seconds(AUTOTEST_START_DELAY)
 
-
-func _on_hero_arrived() -> void:
-	if not _autotest or _autotest_phase != 0:
+	# 1. Тап по ближайшему врагу в его точке прицела: проверяем луч и выбор цели.
+	var first: Enemy3D = combat.nearest_enemy(hero.position)
+	if first == null:
+		_autotest_fail("no enemies")
 		return
-	var cell: Vector2i = world.world_to_grid(hero.position)
-	var expected: Vector2i = world.nearest_free_cell(_autotest_target)
-	var center: Vector3 = world.grid_to_world(cell)
-	var on_center: bool = hero.position.distance_to(center) < 0.05
-	if cell != expected or not on_center:
-		_autotest_fail("arrive pos=(%.2f, %.2f) cell=%s expected=%s" % [hero.position.x, hero.position.z, cell, expected])
+	var sp: Vector2 = camera.unproject_position(first.hit_point())
+	_handle_tap(sp)
+	if combat.target != first:
+		_autotest_fail("tap on enemy did not select it (ray pick)")
 		return
-	print("AUTOTEST3D arrived pos=(%.2f, %.2f) cell=%s -> attack" % [hero.position.x, hero.position.z, cell])
-	_autotest_phase = 1
-	hero.attack()
+	print("AUTOTEST3D tap enemy dist=%.2f selected" % Combat.hdist(hero.position, first.position))
 
-
-func _on_attack_finished() -> void:
-	if not _autotest or _autotest_phase != 1:
+	# 2. Герои подходит и убивает цель авто-ударами; при смерти — авто-переключение.
+	combat.enemy_killed.connect(_at_on_kill)
+	await _wait_until(func(): return _at_kill_seen)
+	if not _at_kill_seen:
+		_autotest_fail("first enemy not killed")
 		return
-	print("AUTOTEST3D attack done -> die")
-	_autotest_phase = 2
-	hero.die()
-
-
-func _on_death_finished() -> void:
-	if not _autotest or _autotest_phase != 2:
+	if not _at_switch_ok:
+		_autotest_fail("auto-switch wrong: target=%s expected=%s" % [combat.target, _at_expected])
 		return
-	_autotest_phase = 3
-	print("AUTOTEST3D OK walk+attack+death pos=(%.2f, %.2f) state=%s" % [hero.position.x, hero.position.z, hero.state_name()])
+	print("AUTOTEST3D kill1 ok auto-switch=%s" % ("yes" if _at_expected != null else "none nearby"))
+
+	if combat.target != null:
+		var hits0 := combat.hero_hits
+		await _wait_until(func(): return combat.hero_hits > hits0)
+		if combat.hero_hits <= hits0:
+			_autotest_fail("no hit on the auto-selected target")
+			return
+		print("AUTOTEST3D hit auto-target ok")
+
+	# 3. Навык: подойти к ближайшему врагу на 2.5 м и применить «Выпад».
+	var n = await _approach_nearest(AUTOTEST_SKILL_APPROACH)
+	if n == null:
+		_autotest_fail("no enemy to use skill on")
+		return
+	if not combat.use_skill():
+		_autotest_fail("skill not used (cooldown or no enemy in 3 m)")
+		return
+	var kills0 := combat.kills
+	await _wait_until(func(): return not combat.skill_pending)
+	if combat.kills <= kills0:
+		_autotest_fail("skill strike did not kill the target")
+		return
+	print("AUTOTEST3D skill ok dmg=%d" % Combat.SKILL_DAMAGE)
+
+	_autotest_done = true
+	print("AUTOTEST3D OK combat kills=%d hero_hp=%d" % [combat.kills, hero.hp])
 	get_tree().quit(0)
 
 
-func _autotest_fail(reason: String) -> void:
-	if _autotest_phase == 3:
+## Проверка в момент смерти первой цели (сигнал идёт уже после переключения).
+func _at_on_kill(_e, _next) -> void:
+	if _at_kill_seen:
 		return
-	_autotest_phase = 3
+	_at_kill_seen = true
+	_at_expected = combat.nearest_enemy(hero.position, Combat.AUTO_SWITCH_RADIUS)
+	if _at_expected == null:
+		_at_switch_ok = combat.target == null
+	else:
+		_at_switch_ok = combat.target == _at_expected
+
+
+func _autotest_fail(reason: String) -> void:
+	if _autotest_done:
+		return
+	_autotest_done = true
 	print("AUTOTEST3D FAIL %s" % reason)
 	get_tree().quit(1)
 
 
 func _autotest_timeout() -> void:
-	_autotest_fail("timeout phase=%d pos=(%.2f, %.2f) state=%s" % [_autotest_phase, hero.position.x, hero.position.z, hero.state_name()])
+	_autotest_fail("timeout hero=(%.2f, %.2f) state=%s kills=%d" % [hero.position.x, hero.position.z, hero.state_name(), combat.kills])
+
+
+## Тап по ближайшему врагу, ждём подхода на dist_max. Возвращает врага или null.
+func _approach_nearest(dist_max: float) -> Enemy3D:
+	for _i in 10:
+		var n: Enemy3D = combat.nearest_enemy(hero.position)
+		if n == null:
+			return null
+		_handle_tap(camera.unproject_position(n.hit_point()))
+		var nn: Enemy3D = n
+		await _wait_until(func(): return not nn.is_alive() or Combat.hdist(hero.position, nn.position) <= dist_max)
+		if nn.is_alive() and Combat.hdist(hero.position, nn.position) <= dist_max:
+			return nn
+	return null
 
 
 # ------------------------------------------------------------------ --shots / --screenshot
@@ -173,6 +271,11 @@ func _autotest_timeout() -> void:
 func _run_shots(dir: String) -> void:
 	DirAccess.make_dir_recursive_absolute(dir)
 	hero.face_direction(Vector3(1.0, 0.0, 1.0))
+	await _run_combat_shots(dir)
+	combat.cancel()
+	hero.stop()
+	await _wait_until(func(): return hero.state_name() != "attack")
+
 	await _wait_seconds(SHOT_IDLE_DELAY)
 	await _capture(dir.path_join("3d_idle.png"))
 
@@ -210,6 +313,43 @@ func _run_shots(dir: String) -> void:
 	await _wait_until(func(): return hero.state_name() != "attack")
 	print("SHOTS DONE dir=%s" % dir)
 	get_tree().quit(0)
+
+
+## Кадры боя: подход, удар, навык, крупный план врага с полоской и кольцом.
+func _run_combat_shots(dir: String) -> void:
+	await _wait_seconds(SHOT_IDLE_DELAY)
+	var first: Enemy3D = combat.nearest_enemy(hero.position)
+	if first == null:
+		print("SHOT combat: no enemies")
+		return
+	_handle_tap(camera.unproject_position(first.hit_point()))
+	var f: Enemy3D = first
+	await _wait_until(func(): return not f.is_alive() or (hero.state_name() == "walk" and Combat.hdist(hero.position, f.position) <= SHOT_APPROACH_DIST))
+	await _capture(dir.path_join("3d_combat_approach.png"))
+
+	var hits0 := combat.hero_hits
+	await _wait_until(func(): return combat.hero_hits > hits0)
+	await _wait_seconds(SHOT_HIT_DELAY)
+	await _capture(dir.path_join("3d_combat_hit.png"))
+
+	var n: Enemy3D = await _approach_nearest(AUTOTEST_SKILL_APPROACH)
+	if n != null and combat.use_skill():
+		await _wait_until(func(): return not combat.skill_pending)
+		await _wait_seconds(SHOT_HIT_DELAY)
+		await _capture(dir.path_join("3d_combat_skill.png"))
+	else:
+		print("SHOT combat: skill not used")
+
+	var close: Enemy3D = combat.nearest_enemy(hero.position)
+	if close != null:
+		combat.select_target(close)
+		camera.target = close
+		camera.set_zoom(SHOT_ENEMY_ZOOM)
+		await _wait_seconds(SHOT_SETTLE)
+		await _capture(dir.path_join("3d_enemy_close.png"))
+		camera.target = hero
+		camera.set_zoom(SHOT_DEFAULT_ZOOM)
+		await _wait_seconds(SHOT_SETTLE)
 
 
 func _run_single_shot(path: String) -> void:

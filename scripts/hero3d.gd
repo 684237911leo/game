@@ -111,8 +111,7 @@ func move_to(target: Vector3) -> void:
 	if pts.is_empty():
 		return
 	# Первая точка (центр клетки) позади — пропускаем.
-	if pts.size() > 1 and position.distance_squared_to(pts[1]) < position.distance_squared_to(pts[0]):
-		pts.remove_at(0)
+	pts = Combat.trim_passed(position, pts)
 	_path = pts
 	world.show_marker(pts[pts.size() - 1])
 	if _state == State.IDLE:

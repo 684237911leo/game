@@ -4,6 +4,16 @@
 [ext_resource type="Script" path="res://scripts/world3d.gd" id="2_world"]
 [ext_resource type="Script" path="res://scripts/hero3d.gd" id="3_hero"]
 [ext_resource type="Script" path="res://scripts/follow_camera3d.gd" id="4_cam"]
+[ext_resource type="Script" path="res://scripts/combat.gd" id="5_combat"]
+
+[sub_resource type="StyleBoxFlat" id="HpFill"]
+bg_color = Color(0.72, 0.1, 0.1, 1)
+
+[sub_resource type="StyleBoxFlat" id="HpBack"]
+bg_color = Color(0.1, 0.07, 0.06, 0.8)
+
+[sub_resource type="StyleBoxFlat" id="CdFill"]
+bg_color = Color(0.85, 0.68, 0.32, 1)
 
 [sub_resource type="Environment" id="Environment_main"]
 background_mode = 1
@@ -32,6 +42,9 @@ script = ExtResource("2_world")
 [node name="Hero" type="Node3D" parent="."]
 script = ExtResource("3_hero")
 
+[node name="Combat" type="Node" parent="."]
+script = ExtResource("5_combat")
+
 [node name="FollowCamera" type="Camera3D" parent="."]
 current = true
 script = ExtResource("4_cam")
@@ -46,8 +59,36 @@ offset_bottom = 80.0
 grow_horizontal = 2
 theme_override_colors/font_color = Color(0.9, 0.85, 0.72, 1)
 theme_override_font_sizes/font_size = 22
-text = "Тапни по земле — героиня идёт"
+text = "Тап по врагу — бой, тап по земле — идти"
 horizontal_alignment = 1
+
+[node name="HeroHP" type="ProgressBar" parent="HUD"]
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -200.0
+offset_top = 12.0
+offset_right = 200.0
+offset_bottom = 32.0
+mouse_filter = 2
+max_value = 100.0
+value = 100.0
+show_percentage = false
+theme_override_styles/background = SubResource("HpBack")
+theme_override_styles/fill = SubResource("HpFill")
+
+[node name="Kills" type="Label" parent="HUD"]
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -240.0
+offset_top = 84.0
+offset_right = -16.0
+offset_bottom = 116.0
+grow_horizontal = 0
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.9, 0.85, 0.72, 1)
+theme_override_font_sizes/font_size = 22
+text = "Убито: 0"
+horizontal_alignment = 2
 
 [node name="Controls" type="HBoxContainer" parent="HUD"]
 mouse_filter = 2
@@ -61,20 +102,30 @@ offset_right = -24.0
 offset_bottom = -30.0
 grow_horizontal = 2
 grow_vertical = 0
-theme_override_constants/separation = 24
+alignment = 2
 
-[node name="AttackButton" type="Button" parent="HUD/Controls"]
+[node name="SkillButton" type="Button" parent="HUD/Controls"]
 modulate = Color(1, 1, 1, 0.85)
-custom_minimum_size = Vector2(140, 90)
+custom_minimum_size = Vector2(200, 100)
 layout_mode = 2
-size_flags_horizontal = 3
-theme_override_font_sizes/font_size = 28
-text = "Удар"
+theme_override_font_sizes/font_size = 30
+text = "Выпад"
 
-[node name="DeathButton" type="Button" parent="HUD/Controls"]
-modulate = Color(1, 1, 1, 0.85)
-custom_minimum_size = Vector2(140, 90)
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_font_sizes/font_size = 28
-text = "Смерть"
+[node name="CooldownBar" type="ProgressBar" parent="HUD/Controls/SkillButton"]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = -16.0
+offset_right = -8.0
+offset_bottom = -8.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+max_value = 100.0
+value = 100.0
+show_percentage = false
+theme_override_styles/background = SubResource("HpBack")
+theme_override_styles/fill = SubResource("CdFill")
